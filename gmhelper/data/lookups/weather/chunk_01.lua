@@ -1,0 +1,22 @@
+return {
+    {id=0, name='none'},
+    {id=1, name='sunshine'},
+    {id=2, name='clouds'},
+    {id=3, name='fog'},
+    {id=4, name='hot spell'},
+    {id=5, name='heat wave'},
+    {id=6, name='rain'},
+    {id=7, name='squall'},
+    {id=8, name='dust storm'},
+    {id=9, name='sand storm'},
+    {id=10, name='wind'},
+    {id=11, name='gales'},
+    {id=12, name='snow'},
+    {id=13, name='blizzards'},
+    {id=14, name='thunder'},
+    {id=15, name='thunderstorms'},
+    {id=16, name='auroras'},
+    {id=17, name='stellar glare'},
+    {id=18, name='gloom'},
+    {id=19, name='darkness'}
+}
