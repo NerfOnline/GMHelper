@@ -14,8 +14,11 @@ local searches = {};
 local childCall = nil;
 local scale = 1;
 local fontScaled = false;
-local sharedInput = nil;
-local sharedCombo = nil;
+local syncedCommands = nil;
+local comboWidths = setmetatable({}, { __mode = 'k' });
+local idWidths = setmetatable({}, { __mode = 'k' });
+local inputWidths = setmetatable({}, { __mode = 'k' });
+local fieldWidths = setmetatable({}, { __mode = 'k' });
 local arrowCapture = false;
 local arrowCaptureRequest = false;
 local comboOpenPrev = false;
@@ -67,6 +70,13 @@ local JOB_NAMES = {
     MON = 'Monster',
 };
 
+local function reset_width_cache()
+    comboWidths = setmetatable({}, { __mode = 'k' });
+    idWidths = setmetatable({}, { __mode = 'k' });
+    inputWidths = setmetatable({}, { __mode = 'k' });
+    fieldWidths = setmetatable({}, { __mode = 'k' });
+end
+
 function widgets.begin_frame()
     arrowCaptureRequest = false;
     comboOpenPrev = comboOpenNow;
@@ -113,13 +123,18 @@ local function note_combo_open()
 end
 
 function widgets.configure(nextScale, usedFontScale)
-    scale = nextScale or 1;
-    if (scale < 0.1) then
-        scale = 0.1;
-    elseif (scale > 3) then
-        scale = 3;
+    local configuredScale = nextScale or 1;
+    if (configuredScale < 0.1) then
+        configuredScale = 0.1;
+    elseif (configuredScale > 3) then
+        configuredScale = 3;
     end
-    fontScaled = usedFontScale == true;
+    local configuredFontScale = usedFontScale == true;
+    if (configuredScale ~= scale or configuredFontScale ~= fontScaled) then
+        reset_width_cache();
+    end
+    scale = configuredScale;
+    fontScaled = configuredFontScale;
 end
 
 function widgets.px(value)
@@ -220,6 +235,20 @@ local function item_bounds(fallbackW, fallbackH)
     return x1, y1, x2, y2;
 end
 
+local function paint_focus_border(fallbackW, fallbackH)
+    local active = imgui.IsItemActive ~= nil and imgui.IsItemActive();
+    local focused = imgui.IsItemFocused ~= nil and imgui.IsItemFocused();
+    if (not active and not focused) or imgui.GetWindowDrawList == nil then
+        return;
+    end
+    local draw = imgui.GetWindowDrawList();
+    if (draw == nil or draw.AddRect == nil) then
+        return;
+    end
+    local x1, y1, x2, y2 = item_bounds(fallbackW, fallbackH);
+    pcall(draw.AddRect, draw, { x1, y1 }, { x2, y2 }, theme.col32(theme.colors.royal), 0, 0, 1);
+end
+
 local function text_size(text)
     if (imgui.CalcTextSize ~= nil) then
         local a, b = imgui.CalcTextSize(text);
@@ -245,9 +274,9 @@ function widgets.placeholder(id, buffer, hint, width, align)
         local x1, y1, x2, y2 = item_bounds(width, 22);
         local tw, th = text_size(hint or '');
         local draw = imgui.GetWindowDrawList();
-        local x = x1 + math.max(4, ((x2 - x1) - tw) * 0.5);
-        if (align == 'left') then
-            x = x1 + widgets.px(10);
+        local x = x1 + widgets.px(10);
+        if (align == 'center') then
+            x = x1 + math.max(4, ((x2 - x1) - tw) * 0.5);
         end
         if (draw ~= nil and draw.AddText ~= nil) then
             draw:AddText({
@@ -256,6 +285,7 @@ function widgets.placeholder(id, buffer, hint, width, align)
             }, theme.col32(theme.colors.muted), hint or '');
         end
     end
+    paint_focus_border(width, 22);
 end
 
 function widgets.icon_button_size()
@@ -273,19 +303,73 @@ function widgets.icon_button_size()
     return math.max(widgets.px(22), math.floor(textH + widgets.px(6) * 2));
 end
 
-local function royal_button(id)
+local function button_palette(variant)
+    if (variant == 'primary') then
+        return theme.colors.royal,
+            theme.colors.royalHover,
+            theme.colors.royalActive,
+            theme.colors.text,
+            theme.colors.royal;
+    elseif (variant == 'danger') then
+        return theme.colors.remove,
+            theme.colors.removeHover,
+            theme.colors.remove,
+            theme.colors.text,
+            theme.colors.remove;
+    elseif (variant == 'danger-muted') then
+        return theme.colors.removeMuted,
+            theme.colors.removeSoft,
+            theme.colors.removeSoft,
+            theme.colors.remove,
+            theme.colors.borderSoft;
+    elseif (variant == 'selected') then
+        return theme.colors.accentMuted,
+            theme.colors.accentSoft,
+            theme.colors.accentSoft,
+            theme.colors.royal,
+            theme.colors.royal;
+    elseif (variant == 'ghost') then
+        return theme.colors.clear,
+            theme.colors.accentMuted,
+            theme.colors.accentSoft,
+            theme.colors.peach,
+            theme.colors.clear;
+    end
+    return theme.colors.surface,
+        theme.colors.fieldActive,
+        theme.colors.accentMuted,
+        theme.colors.secondary,
+        theme.colors.border;
+end
+
+local function push_button_palette(variant)
+    local base, hovered, active, text, border = button_palette(variant);
+    imgui.PushStyleColor(ImGuiCol_Button, base);
+    imgui.PushStyleColor(ImGuiCol_ButtonHovered, hovered);
+    imgui.PushStyleColor(ImGuiCol_ButtonActive, active);
+    imgui.PushStyleColor(ImGuiCol_Text, text);
+    imgui.PushStyleColor(ImGuiCol_Border, border);
+end
+
+function widgets.button(label, id, width, variant, height)
+    push_button_palette(variant or 'secondary');
+    local clicked = imgui.Button(tostring(label or '') .. '##' .. tostring(id or label or ''), {
+        width or 0,
+        height or 0,
+    });
+    imgui.PopStyleColor(5);
+    return clicked;
+end
+
+local function icon_button(id, variant)
     local size = widgets.icon_button_size();
-    imgui.PushStyleColor(ImGuiCol_Button, theme.colors.royal);
-    imgui.PushStyleColor(ImGuiCol_ButtonHovered, theme.colors.royalHover);
-    imgui.PushStyleColor(ImGuiCol_ButtonActive, theme.colors.royalActive);
-    imgui.PushStyleColor(ImGuiCol_Text, theme.colors.text);
-    imgui.PushStyleColor(ImGuiCol_Border, theme.colors.royal);
+    push_button_palette(variant or 'ghost');
     local clicked = imgui.Button('##' .. id, { size, size });
     imgui.PopStyleColor(5);
     return clicked;
 end
 
-local function paint_star(filled)
+local function paint_star(filled, color)
     local draw = imgui.GetWindowDrawList();
     if (draw == nil) then
         return;
@@ -295,7 +379,7 @@ local function paint_star(filled)
     local cy = (y1 + y2) * 0.5;
     local radius = math.min(x2 - x1, y2 - y1) * 0.32;
     local inner = radius * 0.58;
-    local col = theme.col32(theme.colors.text);
+    local col = theme.col32(color or theme.colors.peach);
     local points = {};
     for index = 0, 9 do
         local angle = -math.pi / 2 + index * math.pi / 5;
@@ -322,7 +406,7 @@ local function paint_star(filled)
     end
 end
 
-local function paint_trash()
+local function paint_trash(color)
     local draw = imgui.GetWindowDrawList();
     if (draw == nil or draw.AddRectFilled == nil) then
         return;
@@ -332,14 +416,8 @@ local function paint_trash()
     local cy = (y1 + y2) * 0.5;
     local size = math.min(x2 - x1, y2 - y1) * 0.46;
     local top = cy - size * 0.46;
-    local col = theme.col32(theme.colors.text);
-    local slot = theme.colors.royal;
-    if (imgui.IsItemActive ~= nil and imgui.IsItemActive()) then
-        slot = theme.colors.royalActive;
-    elseif (imgui.IsItemHovered ~= nil and imgui.IsItemHovered()) then
-        slot = theme.colors.royalHover;
-    end
-    local slotCol = theme.col32(slot);
+    local col = theme.col32(color or theme.colors.remove);
+    local slotCol = theme.col32(theme.colors.abyss);
     local function fill(minX, minY, maxX, maxY, color)
         draw:AddRectFilled({ minX, minY }, { maxX, maxY }, color);
     end
@@ -356,26 +434,50 @@ local function paint_trash()
 end
 
 function widgets.favorite(id, selected)
-    local clicked = royal_button('fav' .. id);
-    paint_star(selected == true);
+    local variant = selected == true and 'selected' or 'ghost';
+    local clicked = icon_button('fav' .. id, variant);
+    paint_star(selected == true, selected == true and theme.colors.royal or theme.colors.peach);
     return clicked;
 end
 
 function widgets.remove(id)
-    local clicked = royal_button('remove' .. id);
-    paint_trash();
+    local clicked = icon_button('remove' .. id, 'danger-muted');
+    paint_trash(theme.colors.remove);
     return clicked;
 end
 
 function widgets.execute(id)
-    imgui.PushStyleColor(ImGuiCol_Button, theme.colors.royal);
-    imgui.PushStyleColor(ImGuiCol_ButtonHovered, theme.colors.royalHover);
-    imgui.PushStyleColor(ImGuiCol_ButtonActive, theme.colors.royalActive);
-    imgui.PushStyleColor(ImGuiCol_Text, theme.colors.text);
-    imgui.PushStyleColor(ImGuiCol_Border, theme.colors.royal);
-    local clicked = imgui.Button('Execute##' .. id, { widgets.px(88), 0 });
-    imgui.PopStyleColor(5);
-    return clicked;
+    return widgets.button('Execute', id, widgets.px(88), 'primary');
+end
+
+function widgets.section_heading(label)
+    imgui.PushStyleColor(ImGuiCol_Text, theme.colors.peach);
+    imgui.Text(tostring(label or ''):upper());
+    imgui.PopStyleColor();
+    imgui.PushStyleColor(ImGuiCol_Separator, theme.colors.borderSoft);
+    imgui.Separator();
+    imgui.PopStyleColor();
+    imgui.Spacing();
+end
+
+function widgets.label(text)
+    imgui.PushStyleColor(ImGuiCol_Text, theme.colors.peach);
+    imgui.Text(tostring(text or ''):upper());
+    imgui.PopStyleColor();
+end
+
+function widgets.helper_text(text, color)
+    imgui.PushStyleColor(ImGuiCol_Text, color or theme.colors.muted);
+    if (imgui.TextWrapped ~= nil) then
+        imgui.TextWrapped(tostring(text or ''));
+    else
+        imgui.Text(tostring(text or ''));
+    end
+    imgui.PopStyleColor();
+end
+
+function widgets.empty_state(text)
+    widgets.helper_text(text, theme.colors.peach);
 end
 
 local FIELD_GAP = 8;
@@ -630,12 +732,20 @@ function widgets.labels_combo_display_width(labels)
 end
 
 --- Begin a settings-style combo: field fits full selected text + arrow; list fits labels; no wrap.
---- Optional fixedW (logical px) forces closed field + popup list to that width (e.g. welcome / fav modal).
+--- Optional fixedW (logical px) forces closed field + popup list to that width.
+--- Pass 'fill' to use the remaining content width.
 --- Optional centerPreview centers the closed-field label (list options are unchanged).
 function widgets.begin_labels_combo(id, preview, labels, flags, fixedW, centerPreview)
     local listW = widgets.labels_combo_width(labels);
     local displayW = widgets.labels_combo_display_width(labels);
-    if (type(fixedW) == 'number' and fixedW > 0) then
+    if (fixedW == 'fill' and imgui.GetContentRegionAvail ~= nil) then
+        local avail, second = imgui.GetContentRegionAvail();
+        displayW = select(1, vec2(avail, second));
+        if (displayW < 1) then
+            displayW = 1;
+        end
+        listW = math.max(1, displayW - combo_arrow_width());
+    elseif (type(fixedW) == 'number' and fixedW > 0) then
         displayW = widgets.px(fixedW);
         listW = math.max(1, displayW - combo_arrow_width());
     end
@@ -690,7 +800,7 @@ function widgets.begin_labels_combo(id, preview, labels, flags, fixedW, centerPr
     end
     if (opened) then
         note_combo_open();
-        -- Popup matches the closed preview width; options fill that width (text stays centered).
+        -- Popup matches the closed preview width; options fill that width.
         if (imgui.SetWindowSize ~= nil) then
             local height = widgets.px(COMBO_LIST_H) + widgets.px(24);
             if (imgui.GetWindowHeight ~= nil) then
@@ -702,7 +812,7 @@ function widgets.begin_labels_combo(id, preview, labels, flags, fixedW, centerPr
             pcall(imgui.SetWindowSize, { displayW, height });
         end
         if (imgui.PushStyleVar ~= nil and ImGuiStyleVar_SelectableTextAlign ~= nil) then
-            imgui.PushStyleVar(ImGuiStyleVar_SelectableTextAlign, { 0.5, 0.5 });
+            imgui.PushStyleVar(ImGuiStyleVar_SelectableTextAlign, { 0, 0.5 });
             return true, true, displayW;
         end
         return true, false, displayW;
@@ -719,7 +829,7 @@ function widgets.end_labels_combo(opened, alignPushed)
     end
 end
 
---- Settings combo option: full-width hit/highlight; label text centered.
+--- Settings combo option: full-width hit/highlight; label text left-aligned.
 function widgets.labels_combo_option(id, label, selected, listW)
     listW = listW or widgets.px(120);
     local rowH = combo_line_height();
@@ -758,7 +868,16 @@ function widgets.labels_combo_option(id, label, selected, listW)
     if (hot) then
         theme.paint_row_highlight(x1, y1, x2, y2, widgets.px(3));
     end
-    paint_combo_text(x1, y1, x2, y2, wraps, theme.col32(theme.colors.text), nil, true);
+    paint_combo_text(
+        x1,
+        y1,
+        x2,
+        y2,
+        wraps,
+        theme.col32(theme.colors.text),
+        x1 + widgets.px(8),
+        false
+    );
     imgui.PopStyleColor(3);
     if (spacingPushed > 0 and imgui.PopStyleVar ~= nil) then
         imgui.PopStyleVar(spacingPushed);
@@ -798,13 +917,19 @@ local function measure_input(field)
 end
 
 function widgets.sync_widths(commandList)
-    -- Combo widths are measured per lookup from the longest displayed value.
-    sharedInput = nil;
-    sharedCombo = nil;
+    if (syncedCommands ~= commandList) then
+        syncedCommands = commandList;
+        reset_width_cache();
+    end
 end
 
 function widgets.combo_width(field)
-    return measure_combo(field);
+    local width = comboWidths[field];
+    if (width == nil) then
+        width = measure_combo(field);
+        comboWidths[field] = width;
+    end
+    return width;
 end
 
 function widgets.combo_display_width(field)
@@ -813,11 +938,21 @@ function widgets.combo_display_width(field)
 end
 
 function widgets.id_width(field)
-    return measure_id(field);
+    local width = idWidths[field];
+    if (width == nil) then
+        width = measure_id(field);
+        idWidths[field] = width;
+    end
+    return width;
 end
 
 function widgets.input_width(field)
-    return measure_input(field);
+    local width = inputWidths[field];
+    if (width == nil) then
+        width = measure_input(field);
+        inputWidths[field] = width;
+    end
+    return width;
 end
 
 local function measure_fill_slot()
@@ -835,14 +970,23 @@ function widgets.fills_width(field)
     return total;
 end
 
-function widgets.field_width(field)
-    if (field.kind ~= 'lookup') then
-        return widgets.input_width(field);
+function widgets.field_width(field, maxWidth)
+    local width = fieldWidths[field];
+    if (width == nil) then
+        if (field.kind ~= 'lookup') then
+            width = widgets.input_width(field);
+        else
+            width = widgets.combo_display_width(field)
+                + widgets.fills_width(field)
+                + widgets.px(FIELD_GAP)
+                + widgets.id_width(field);
+        end
+        fieldWidths[field] = width;
     end
-    return widgets.combo_display_width(field)
-        + widgets.fills_width(field)
-        + widgets.px(FIELD_GAP)
-        + widgets.id_width(field);
+    if (type(maxWidth) == 'number') then
+        return math.min(width, math.max(1, maxWidth));
+    end
+    return width;
 end
 
 local function jobs_only(cats)
@@ -1369,7 +1513,7 @@ local function draw_combo_list(popupId, cats, currentId, width, onSelect, values
     widgets.apply_font();
     local alignPushed = false;
     if (imgui.PushStyleVar ~= nil and ImGuiStyleVar_SelectableTextAlign ~= nil) then
-        imgui.PushStyleVar(ImGuiStyleVar_SelectableTextAlign, { 0.5, 0.5 });
+        imgui.PushStyleVar(ImGuiStyleVar_SelectableTextAlign, { 0, 0.5 });
         alignPushed = true;
     end
     lookup.focus(cats);
@@ -1573,8 +1717,8 @@ local function draw_combo_list(popupId, cats, currentId, width, onSelect, values
                             y2,
                             wraps,
                             theme.col32(theme.colors.peach),
-                            nil,
-                            true
+                            x1 + widgets.px(8),
+                            false
                         );
                     else
                         local selected = row_matches_selection(row, currentId, values, field);
@@ -1600,8 +1744,8 @@ local function draw_combo_list(popupId, cats, currentId, width, onSelect, values
                             y2,
                             wraps,
                             theme.col32(theme.colors.text),
-                            nil,
-                            true
+                            x1 + widgets.px(8),
+                            false
                         );
                         imgui.PopStyleColor(3);
                         if (pickedRow and row ~= nil) then
@@ -1634,7 +1778,7 @@ local function draw_combo_list(popupId, cats, currentId, width, onSelect, values
     end
 end
 
-function widgets.lookup(id, field, values, labels)
+function widgets.lookup(id, field, values, labels, maxWidth)
     local cats = cats_of(field);
     for _, cat in ipairs(cats) do
         lookup.ensure(cat);
@@ -1683,7 +1827,12 @@ function widgets.lookup(id, field, values, labels)
     if (shown == nil or shown == '') then
         shown = hint;
     end
+    local idW = widgets.id_width(field);
+    local tailW = widgets.fills_width(field) + widgets.px(FIELD_GAP) + idW;
     local displayW = widgets.combo_display_width(field);
+    if (type(maxWidth) == 'number') then
+        displayW = math.min(displayW, math.max(1, maxWidth - tailW));
+    end
     local empty = shown == hint;
     if (empty) then
         imgui.PushStyleColor(ImGuiCol_Text, theme.colors.muted);
@@ -1737,7 +1886,7 @@ function widgets.lookup(id, field, values, labels)
     end
 
     imgui.SameLine();
-    widgets.placeholder(id .. 'id', values[field.key], 'ID', widgets.id_width(field));
+    widgets.placeholder(id .. 'id', values[field.key], 'ID', idW);
     local idFocused = item_focused();
     if (not opened and current ~= '' and (comboFocused or fillFocused or idFocused)) then
         arrowCaptureRequest = true;

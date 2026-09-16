@@ -28,10 +28,15 @@ theme.colors = {
     royal = { 0xc5 / 255, 0x51 / 255, 0x51 / 255, 1.0 },
     royalHover = { 0xd4 / 255, 0x5e / 255, 0x5e / 255, 1.0 },
     royalActive = { 0xb8 / 255, 0x40 / 255, 0x40 / 255, 1.0 },
+    accentMuted = { 0xc5 / 255, 0x51 / 255, 0x51 / 255, 0.15 },
+    accentSoft = { 0xc5 / 255, 0x51 / 255, 0x51 / 255, 0.28 },
     remove = { 0xe0 / 255, 0x40 / 255, 0x40 / 255, 1.0 },
     removeHover = { 0xea / 255, 0x58 / 255, 0x58 / 255, 1.0 },
+    removeMuted = { 0xe0 / 255, 0x40 / 255, 0x40 / 255, 0.14 },
+    removeSoft = { 0xe0 / 255, 0x40 / 255, 0x40 / 255, 0.28 },
     border = { 0xd2 / 255, 0xab / 255, 0xab / 255, 0.20 },
     borderSoft = { 0xd2 / 255, 0xab / 255, 0xab / 255, 0.12 },
+    borderStrong = { 0xd2 / 255, 0xab / 255, 0xab / 255, 0.32 },
     clear = { 0, 0, 0, 0 },
 };
 
@@ -39,11 +44,17 @@ local pushedColors = 0;
 local pushedVars = 0;
 
 local function pushColor(idx, color)
+    if (idx == nil) then
+        return;
+    end
     imgui.PushStyleColor(idx, color);
     pushedColors = pushedColors + 1;
 end
 
 local function pushVar(idx, ...)
+    if (idx == nil) then
+        return;
+    end
     imgui.PushStyleVar(idx, ...);
     pushedVars = pushedVars + 1;
 end
@@ -52,11 +63,12 @@ function theme.push()
     pushedColors = 0;
     pushedVars = 0;
 
-    pushVar(ImGuiStyleVar_WindowRounding, 8);
-    pushVar(ImGuiStyleVar_ChildRounding, 6);
-    pushVar(ImGuiStyleVar_FrameRounding, 4);
-    pushVar(ImGuiStyleVar_PopupRounding, 6);
-    pushVar(ImGuiStyleVar_ScrollbarRounding, 6);
+    pushVar(ImGuiStyleVar_WindowRounding, 0);
+    pushVar(ImGuiStyleVar_ChildRounding, 0);
+    pushVar(ImGuiStyleVar_FrameRounding, 0);
+    pushVar(ImGuiStyleVar_PopupRounding, 0);
+    pushVar(ImGuiStyleVar_ScrollbarRounding, 0);
+    pushVar(ImGuiStyleVar_GrabRounding, 0);
     pushVar(ImGuiStyleVar_WindowPadding, { 16, 14 });
     pushVar(ImGuiStyleVar_FramePadding, { 10, 6 });
     pushVar(ImGuiStyleVar_ItemSpacing, { 8, 8 });
@@ -69,7 +81,7 @@ function theme.push()
     pushColor(ImGuiCol_TextDisabled, theme.colors.muted);
     pushColor(ImGuiCol_WindowBg, theme.colors.abyss);
     pushColor(ImGuiCol_ChildBg, theme.colors.glass);
-    pushColor(ImGuiCol_PopupBg, { 0x18 / 255, 0x0e / 255, 0x0e / 255, 1.0 });
+    pushColor(ImGuiCol_PopupBg, theme.colors.glass);
     if (ImGuiCol_ModalWindowDimBg ~= nil) then
         pushColor(ImGuiCol_ModalWindowDimBg, { 0.02, 0.01, 0.01, 0.55 });
     end
@@ -77,18 +89,23 @@ function theme.push()
     pushColor(ImGuiCol_FrameBg, theme.colors.field);
     pushColor(ImGuiCol_FrameBgHovered, theme.colors.fieldHover);
     pushColor(ImGuiCol_FrameBgActive, theme.colors.fieldActive);
-    pushColor(ImGuiCol_TitleBg, theme.colors.abyss);
-    pushColor(ImGuiCol_TitleBgActive, theme.colors.abyss);
+    pushColor(ImGuiCol_TitleBg, theme.colors.glass);
+    pushColor(ImGuiCol_TitleBgActive, theme.colors.glass);
     pushColor(ImGuiCol_ScrollbarBg, { 0x18 / 255, 0x0e / 255, 0x0e / 255, 0.35 });
     pushColor(ImGuiCol_ScrollbarGrab, { 0xd2 / 255, 0xab / 255, 0xab / 255, 0.35 });
     pushColor(ImGuiCol_ScrollbarGrabHovered, { 0xd2 / 255, 0xab / 255, 0xab / 255, 0.55 });
     pushColor(ImGuiCol_ScrollbarGrabActive, theme.colors.royal);
-    pushColor(ImGuiCol_Button, { 0x32 / 255, 0x1f / 255, 0x1f / 255, 0.55 });
-    pushColor(ImGuiCol_ButtonHovered, { 0xc5 / 255, 0x51 / 255, 0x51 / 255, 0.35 });
-    pushColor(ImGuiCol_ButtonActive, { 0xc5 / 255, 0x51 / 255, 0x51 / 255, 0.55 });
-    pushColor(ImGuiCol_Header, { 0xc5 / 255, 0x51 / 255, 0x51 / 255, 0.28 });
-    pushColor(ImGuiCol_HeaderHovered, { 0xc5 / 255, 0x51 / 255, 0x51 / 255, 0.42 });
-    pushColor(ImGuiCol_HeaderActive, { 0xc5 / 255, 0x51 / 255, 0x51 / 255, 0.55 });
+    pushColor(ImGuiCol_Button, theme.colors.surface);
+    pushColor(ImGuiCol_ButtonHovered, theme.colors.accentMuted);
+    pushColor(ImGuiCol_ButtonActive, theme.colors.accentSoft);
+    pushColor(ImGuiCol_Header, theme.colors.accentMuted);
+    pushColor(ImGuiCol_HeaderHovered, theme.colors.accentSoft);
+    pushColor(ImGuiCol_HeaderActive, { 0xc5 / 255, 0x51 / 255, 0x51 / 255, 0.42 });
+    pushColor(ImGuiCol_CheckMark, theme.colors.royal);
+    pushColor(ImGuiCol_SliderGrab, { 0xd2 / 255, 0xab / 255, 0xab / 255, 0.55 });
+    pushColor(ImGuiCol_SliderGrabActive, theme.colors.royal);
+    pushColor(ImGuiCol_NavHighlight, theme.colors.royal);
+    pushColor(ImGuiCol_TextSelectedBg, theme.colors.accentSoft);
     pushColor(ImGuiCol_Separator, theme.colors.borderSoft);
     pushColor(ImGuiCol_ResizeGrip, { 0xd2 / 255, 0xab / 255, 0xab / 255, 0.25 });
     pushColor(ImGuiCol_ResizeGripHovered, theme.colors.royal);

@@ -43,7 +43,7 @@ local LIST_GAP_Y = 4;
 local TITLE_PAD_X = 12;
 local TITLE_PAD_Y = 8;
 local TITLE_GLYPH = 16;
-local ROUND = 8;
+local ROUND = 0;
 local PAD = 16;
 local NO_RESIZE = ImGuiWindowFlags_NoResize or 2;
 local scale = 1;
@@ -402,31 +402,46 @@ local function fill_target_keys(fields)
     return keys;
 end
 
-local function draw_field(command, field, bag, rowId)
+local function draw_field(command, field, bag, rowId, maxWidth)
     if (field.kind == 'lookup') then
-        widgets.lookup(rowId .. field.key, field, bag, labels);
+        widgets.lookup(rowId .. field.key, field, bag, labels, maxWidth);
     else
-        widgets.placeholder(rowId .. field.key, bag[field.key], field.placeholder, widgets.input_width(field));
+        local width = math.min(widgets.input_width(field), math.max(1, maxWidth or widgets.input_width(field)));
+        widgets.placeholder(rowId .. field.key, bag[field.key], field.placeholder, width);
     end
+end
+
+local function rect_visible(width, height)
+    if (imgui.IsRectVisible == nil) then
+        return true;
+    end
+    local ok, visible = pcall(imgui.IsRectVisible, {
+        math.max(1, width or 1),
+        math.max(1, height or 1),
+    });
+    return not ok or visible ~= false;
 end
 
 local function pack_field_rows(fields, fieldLeft, fieldRight, hiddenKeys)
     local rows = {};
     local line = {};
     local x = fieldLeft;
+    local available = math.max(1, fieldRight - fieldLeft);
     for _, field in ipairs(fields) do
         if (hiddenKeys == nil or not hiddenKeys[field.key]) then
-            local width = widgets.field_width(field);
+            local naturalW = widgets.field_width(field);
+            local width = math.min(naturalW, available);
             if (#line > 0 and x + width > fieldRight) then
                 rows[#rows + 1] = line;
                 line = {};
                 x = fieldLeft;
             end
-            line[#line + 1] = { field = field, x = x };
+            width = math.min(naturalW, math.max(1, fieldRight - x));
+            line[#line + 1] = { field = field, x = x, width = width };
             x = x + width + px(GAP);
         end
     end
-    if (#line > 0 or #rows == 0) then
+    if (#line > 0) then
         rows[#rows + 1] = line;
     end
     return rows;
@@ -437,9 +452,19 @@ local function draw_field_rows(rows, startY, lineH, controlH, command, bag, rowI
         local fieldY = startY + (index - 1) * lineH + math.max(0, (lineH - controlH) * 0.5);
         for _, item in ipairs(fieldRow) do
             imgui.SetCursorPos({ item.x, fieldY });
-            draw_field(command, item.field, bag, rowId);
+            draw_field(command, item.field, bag, rowId, item.width);
         end
     end
+end
+
+local function widest_field(fields, hiddenKeys)
+    local widest = 0;
+    for _, field in ipairs(fields or {}) do
+        if (hiddenKeys == nil or not hiddenKeys[field.key]) then
+            widest = math.max(widest, widgets.field_width(field));
+        end
+    end
+    return widest;
 end
 
 local function draw_command(command, bag, mode, onFavorite, onRemove, onExecute, errorText, nameCol, showSeparator, uniqueKey, favorited)
@@ -455,11 +480,6 @@ local function draw_command(command, bag, mode, onFavorite, onRemove, onExecute,
     end
     local favW = widgets.icon_button_size();
     local pair = px(EXEC_W) + px(GAP) + favW;
-    local fieldLeft = startX + (nameCol or 0);
-    local fieldRight = startX + contentW - pair - px(GAP);
-    if (fieldRight < fieldLeft) then
-        fieldRight = fieldLeft;
-    end
     local textH, controlH, lineH = row_metrics();
 
     local required = {};
@@ -473,21 +493,67 @@ local function draw_command(command, bag, mode, onFavorite, onRemove, onExecute,
     end
 
     local hiddenKeys = fill_target_keys(command.fields);
-    local requiredRows = pack_field_rows(required, fieldLeft, fieldRight, hiddenKeys);
-    local optionalRows = {};
-    if (#optional > 0) then
-        optionalRows = pack_field_rows(optional, fieldLeft, fieldRight, hiddenKeys);
+    local wideFieldLeft = startX + (nameCol or 0);
+    local wideFieldRight = startX + contentW - pair - px(GAP);
+    local wideFieldW = math.max(0, wideFieldRight - wideFieldLeft);
+    local largestField = math.max(widest_field(required, hiddenKeys), widest_field(optional, hiddenKeys));
+    local compact = largestField > wideFieldW or wideFieldW < px(120);
+    local fieldLeft = compact and startX or wideFieldLeft;
+    local fieldRight = compact and (startX + contentW) or wideFieldRight;
+    local fieldsStartY = startY;
+    local headerH = 0;
+    local actionsRow = 0;
+    if (compact) then
+        if (text_px('!' .. command.id) + px(GAP) + pair > contentW) then
+            actionsRow = 1;
+        end
+        headerH = lineH * (actionsRow + 1) + px(4);
+        fieldsStartY = startY + headerH;
     end
 
-    local requiredH = math.max(1, #requiredRows) * lineH;
+    local requiredRows = pack_field_rows(required, fieldLeft, fieldRight, hiddenKeys);
+    local optionalRows = {};
+    local optionalFieldLeft = fieldLeft;
+    if (#optional > 0) then
+        if (compact) then
+            optionalFieldLeft = startX + text_px('Optional') + px(12);
+        end
+        optionalRows = pack_field_rows(optional, optionalFieldLeft, fieldRight, hiddenKeys);
+    end
+
+    local requiredH = #requiredRows * lineH;
+    if (not compact) then
+        requiredH = math.max(lineH, requiredH);
+    end
     local optionalH = #optionalRows * lineH;
-    local blockH = requiredH + optionalH;
-    local nameY = startY + math.max(0, (requiredH - textH) * 0.5);
-    local buttonY = startY + math.max(0, (requiredH - controlH) * 0.5);
+    local blockH = headerH + requiredH + optionalH;
+    local nameY = startY + math.max(0, ((compact and lineH or requiredH) - textH) * 0.5);
+    local buttonY = startY + actionsRow * lineH
+        + math.max(0, ((compact and lineH or requiredH) - controlH) * 0.5);
+
+    local visibleH = blockH;
+    if (errorText ~= nil and errorText ~= '') then
+        visibleH = visibleH + lineH;
+    end
+    if (not rect_visible(contentW, visibleH)) then
+        imgui.SetCursorPos({ startX, startY + blockH });
+        submit_space(0);
+        if (errorText ~= nil and errorText ~= '') then
+            imgui.Text(errorText);
+        end
+        if (showSeparator) then
+            imgui.Separator();
+        end
+        return;
+    end
 
     imgui.SetCursorPos({ startX, nameY });
+    imgui.PushStyleColor(ImGuiCol_Text, theme.colors.royal);
+    imgui.Text('!');
+    imgui.PopStyleColor();
+    imgui.SameLine(0, 0);
     imgui.PushStyleColor(ImGuiCol_Text, theme.colors.text);
-    imgui.Text('!' .. command.id);
+    imgui.Text(command.id);
     imgui.PopStyleColor();
     hover_tip(command.desc, command_example(command));
 
@@ -506,10 +572,10 @@ local function draw_command(command, bag, mode, onFavorite, onRemove, onExecute,
         end
     end
 
-    draw_field_rows(requiredRows, startY, lineH, controlH, command, bag, rowId);
+    draw_field_rows(requiredRows, fieldsStartY, lineH, controlH, command, bag, rowId);
 
     if (#optionalRows > 0) then
-        local optStartY = startY + requiredH;
+        local optStartY = fieldsStartY + requiredH;
         local optLabelY = optStartY + math.max(0, (lineH - textH) * 0.5);
         imgui.SetCursorPos({ startX, optLabelY });
         imgui.PushStyleColor(ImGuiCol_Text, theme.colors.muted);
@@ -522,7 +588,7 @@ local function draw_command(command, bag, mode, onFavorite, onRemove, onExecute,
     submit_space(0);
 
     if (errorText ~= nil and errorText ~= '') then
-        imgui.PushStyleColor(ImGuiCol_Text, theme.colors.peach);
+        imgui.PushStyleColor(ImGuiCol_Text, theme.colors.remove);
         imgui.Text(errorText);
         imgui.PopStyleColor();
     end
@@ -1057,7 +1123,7 @@ local function name_column(list)
     return widest + px(12);
 end
 
-local MODAL_COMBO_W = 295;
+local WELCOME_COMBO_W = 295;
 
 local function draw_tier_combo(cfg, save, comboId, fixedW, centerPreview)
     local id = comboId or '##tier';
@@ -1083,7 +1149,7 @@ local function draw_tier(cfg, save)
     if (imgui.AlignTextToFramePadding ~= nil) then
         imgui.AlignTextToFramePadding();
     end
-    imgui.Text('Tier');
+    widgets.label('Tier');
     imgui.SameLine();
     draw_tier_combo(cfg, save, '##tier');
 end
@@ -1153,7 +1219,7 @@ local function draw_welcome(cfg, save)
     for tier = 1, 5 do
         tierLabels[tier] = 'Tier ' .. tier;
     end
-    local comboW = px(MODAL_COMBO_W);
+    local comboW = px(WELCOME_COMBO_W);
     local buttonW = px(120);
     local gap = px(GAP);
     local originX = imgui.GetCursorPosX();
@@ -1205,7 +1271,7 @@ local function draw_welcome(cfg, save)
     imgui.Spacing();
 
     imgui.SetCursorPosX(startX + math.max(0, (contentW - comboW) * 0.5));
-    draw_tier_combo(cfg, save, '##welcometier', MODAL_COMBO_W, true);
+    draw_tier_combo(cfg, save, '##welcometier', WELCOME_COMBO_W, true);
     imgui.Spacing();
 
     welcome_centered_text(
@@ -1218,7 +1284,7 @@ local function draw_welcome(cfg, save)
     imgui.Spacing();
 
     imgui.SetCursorPosX(startX + math.max(0, (contentW - buttonW) * 0.5));
-    if (imgui.Button('Accept', { buttonW, 0 })) then
+    if (widgets.button('Accept', 'welcome', buttonW, 'primary')) then
         cfg.welcomeAccepted = true;
         save();
     end
@@ -1279,13 +1345,11 @@ local function draw_category_page(state, cfg, save, category, query)
     end
     end_command_list_spacing(listSpace);
     if (#matched == 0) then
-        imgui.PushStyleColor(ImGuiCol_Text, theme.colors.peach);
         if (query ~= '') then
-            imgui.Text('No commands match.');
+            widgets.empty_state('No commands match.');
         else
-            imgui.Text('No commands are assigned to this tier yet.');
+            widgets.empty_state('No commands are assigned to this tier yet.');
         end
-        imgui.PopStyleColor();
     end
 end
 
@@ -1323,15 +1387,11 @@ local function draw_favorites_page(state, cfg, save)
     end);
     draw_list_loading(cache);
     if (#ids == 0) then
-        imgui.PushStyleColor(ImGuiCol_Text, theme.colors.peach);
-        imgui.Text('Favorite a command to pin it here. Current field values are kept when you favorite.');
-        imgui.PopStyleColor();
+        widgets.empty_state('Favorite a command to pin it here. Current field values are kept when you favorite.');
         return;
     end
     if (#cache.rows == 0 and cache.ready) then
-        imgui.PushStyleColor(ImGuiCol_Text, theme.colors.peach);
-        imgui.Text('No commands match.');
-        imgui.PopStyleColor();
+        widgets.empty_state('No commands match.');
         return;
     end
     local nameCommands = {};
@@ -1370,9 +1430,7 @@ local function draw_presets_page(state, cfg, save)
     end);
     draw_list_loading(cache);
     if (#items == 0 and cache.ready) then
-        imgui.PushStyleColor(ImGuiCol_Text, theme.colors.peach);
-        imgui.Text('No presets yet.');
-        imgui.PopStyleColor();
+        widgets.empty_state('No presets yet.');
         return;
     end
     for index, item in ipairs(cache.rows) do
@@ -1429,9 +1487,7 @@ local function draw_history_page(state, cfg, save, query)
     end
     draw_list_loading(cache);
     if (#entries == 0 and cache.ready) then
-        imgui.PushStyleColor(ImGuiCol_Text, theme.colors.peach);
-        imgui.Text('Executed commands will show up here.');
-        imgui.PopStyleColor();
+        widgets.empty_state('Executed commands will show up here.');
         return;
     end
     local removeAt = nil;
@@ -1467,7 +1523,7 @@ local function draw_history_page(state, cfg, save, query)
         end
         if (state.errors['hist' .. index] ~= nil) then
             imgui.SetCursorPos({ rowX, textY + textH + px(2) });
-            imgui.PushStyleColor(ImGuiCol_Text, theme.colors.peach);
+            imgui.PushStyleColor(ImGuiCol_Text, theme.colors.remove);
             imgui.Text(state.errors['hist' .. index]);
             imgui.PopStyleColor();
         end
@@ -1483,9 +1539,7 @@ local function draw_history_page(state, cfg, save, query)
         save();
     end
     if (#cache.rows == 0 and cache.ready and #entries > 0) then
-        imgui.PushStyleColor(ImGuiCol_Text, theme.colors.peach);
-        imgui.Text('No commands match.');
-        imgui.PopStyleColor();
+        widgets.empty_state('No commands match.');
     end
 end
 
@@ -1543,8 +1597,8 @@ local function symbol_hit(id)
         pushed = pushed + 1;
     end
     imgui.PushStyleColor(ImGuiCol_Button, theme.colors.clear);
-    imgui.PushStyleColor(ImGuiCol_ButtonHovered, theme.colors.clear);
-    imgui.PushStyleColor(ImGuiCol_ButtonActive, theme.colors.clear);
+    imgui.PushStyleColor(ImGuiCol_ButtonHovered, theme.colors.accentMuted);
+    imgui.PushStyleColor(ImGuiCol_ButtonActive, theme.colors.accentSoft);
     imgui.PushStyleColor(ImGuiCol_Border, theme.colors.clear);
     imgui.PushStyleColor(ImGuiCol_Text, theme.colors.clear);
     local clicked = imgui.Button('##' .. id, { px(TITLE_GLYPH), px(TITLE_GLYPH) });
@@ -1563,7 +1617,11 @@ local function paint_symbol(kind, collapsed)
     local x1, y1, x2, y2 = last_item_rect();
     local cx = (x1 + x2) * 0.5;
     local cy = (y1 + y2) * 0.5;
-    local col = theme.col32(theme.colors.peach);
+    local symbolColor = theme.colors.peach;
+    if (imgui.IsItemHovered ~= nil and imgui.IsItemHovered()) then
+        symbolColor = theme.colors.text;
+    end
+    local col = theme.col32(symbolColor);
     local box = px(4);
     local thick = math.max(1, scale * 1.5);
     local function stroke()
@@ -1707,12 +1765,12 @@ end
 
 local function title_chrome(panelFocused)
     if (window_hovered()) then
-        return theme.colors.titleHover, { 0xc5 / 255, 0x51 / 255, 0x51 / 255, 0.55 };
+        return theme.colors.glass, theme.colors.borderStrong;
     end
     if (window_focused() or panelFocused) then
-        return theme.colors.titleActive, { 0xc5 / 255, 0x51 / 255, 0x51 / 255, 0.28 };
+        return theme.colors.glass, theme.colors.accentSoft;
     end
-    return theme.colors.titleIdle, theme.colors.borderSoft;
+    return theme.colors.glass, theme.colors.borderSoft;
 end
 
 -- Title bar is its own window. Collapse only hides the body, so this row never changes size.
@@ -1741,7 +1799,7 @@ local function draw_title(state)
     end
     paint_symbol('chevron', state.collapsed);
 
-    local label = 'GM Helper';
+    local label = 'GM HELPER';
     imgui.SetCursorPos({ startX + glyph + px(8), textY });
     imgui.PushStyleColor(ImGuiCol_Text, theme.colors.text);
     imgui.Text(label);
@@ -1749,7 +1807,7 @@ local function draw_title(state)
 
     imgui.SetCursorPos({ startX + glyph + px(8) + text_px(label) + px(6), textY });
     imgui.PushStyleColor(ImGuiCol_Text, theme.colors.peach);
-    imgui.Text('- v' .. addon.version);
+    imgui.Text('v' .. addon.version);
     imgui.PopStyleColor();
 
     imgui.SetCursorPos({ startX + contentW - glyph, rowY });
@@ -1761,15 +1819,7 @@ local function draw_title(state)
 end
 
 local function tab_radius(height)
-    local radius = px(ROUND);
-    local cap = math.floor((height or px(30)) * 0.45);
-    if (radius > cap) then
-        radius = cap;
-    end
-    if (radius < 4) then
-        radius = 4;
-    end
-    return radius;
+    return 0;
 end
 
 local function paint_selected_tab(radius)
@@ -1905,11 +1955,7 @@ local function section_tab(label, id, selected, width)
 end
 
 local function begin_settings_section(title)
-    imgui.PushStyleColor(ImGuiCol_Text, theme.colors.text);
-    imgui.Text(title);
-    imgui.PopStyleColor();
-    imgui.Separator();
-    imgui.Spacing();
+    widgets.section_heading(title);
 end
 
 local function begin_dimmed()
@@ -1937,7 +1983,7 @@ local function draw_format_combo(label, id, current, options, onPick)
     if (imgui.AlignTextToFramePadding ~= nil) then
         imgui.AlignTextToFramePadding();
     end
-    imgui.Text(label);
+    widgets.label(label);
     imgui.SameLine();
     local labels = {};
     for _, option in ipairs(options) do
@@ -1968,7 +2014,7 @@ local function draw_settings_page(state, cfg, save)
     if (imgui.AlignTextToFramePadding ~= nil) then
         imgui.AlignTextToFramePadding();
     end
-    imgui.Text('Scale');
+    widgets.label('Scale');
     imgui.SameLine();
     imgui.SetNextItemWidth(px(220));
     if (imgui.SliderFloat ~= nil) then
@@ -1981,9 +2027,7 @@ local function draw_settings_page(state, cfg, save)
     imgui.SameLine();
     imgui.Text(('%d%%'):format(math.floor((cfg.scale or 1) * 100 + 0.5)));
     imgui.Spacing();
-    imgui.PushStyleColor(ImGuiCol_Text, theme.colors.muted);
-    imgui.Text('Scales the window and text together.');
-    imgui.PopStyleColor();
+    widgets.helper_text('Scales the window and text together.');
     end_dimmed(scaleDim);
 
     imgui.Spacing();
@@ -1997,7 +2041,7 @@ local function draw_settings_page(state, cfg, save)
     if (imgui.AlignTextToFramePadding ~= nil) then
         imgui.AlignTextToFramePadding();
     end
-    imgui.Text('Command Delay');
+    widgets.label('Command Delay');
     imgui.SameLine();
     imgui.SetNextItemWidth(px(220));
     if (imgui.SliderFloat ~= nil) then
@@ -2009,9 +2053,7 @@ local function draw_settings_page(state, cfg, save)
     imgui.SameLine();
     imgui.Text(('%.1fs'):format(cfg.commandDelay or 1.5));
     imgui.Spacing();
-    imgui.PushStyleColor(ImGuiCol_Text, theme.colors.muted);
-    imgui.Text('Seconds between preset commands. Not wired up yet.');
-    imgui.PopStyleColor();
+    widgets.helper_text('Seconds between preset commands. Not wired up yet.');
     end_dimmed(presetDim);
 
     imgui.Spacing();
@@ -2022,7 +2064,7 @@ local function draw_settings_page(state, cfg, save)
     if (imgui.AlignTextToFramePadding ~= nil) then
         imgui.AlignTextToFramePadding();
     end
-    imgui.Text('Date');
+    widgets.label('Date');
     imgui.SameLine();
     local dateLabels = {};
     for _, option in ipairs(dateFormats) do
@@ -2045,7 +2087,7 @@ local function draw_settings_page(state, cfg, save)
     if (imgui.AlignTextToFramePadding ~= nil) then
         imgui.AlignTextToFramePadding();
     end
-    imgui.Text('Separator');
+    widgets.label('Separator');
     imgui.SameLine();
     local sep = history_date_sep(cfg);
     local sepFlags = ImGuiComboFlags_PopupAlignLeft;
@@ -2073,7 +2115,7 @@ local function draw_settings_page(state, cfg, save)
     if (imgui.AlignTextToFramePadding ~= nil) then
         imgui.AlignTextToFramePadding();
     end
-    imgui.Text('Max Entries');
+    widgets.label('Max Entries');
     imgui.SameLine();
     imgui.SetNextItemWidth(px(220));
     local maxChanged = false;
@@ -2109,9 +2151,7 @@ local function draw_settings_page(state, cfg, save)
     imgui.SameLine();
     imgui.Text(tostring(snapped));
     imgui.Spacing();
-    imgui.PushStyleColor(ImGuiCol_Text, theme.colors.muted);
-    imgui.Text('Formats timestamps and how many History entries to keep.');
-    imgui.PopStyleColor();
+    widgets.helper_text('Formats timestamps and how many History entries to keep.');
 end
 
 local function draw_section_tabs(state)
@@ -2270,7 +2310,6 @@ end
 -- Custom resize of the title+body shell. ImGui body resize can't grow up/left
 -- because the body is pinned under a separate title bar.
 local shellResize = nil;
-local shellDrag = nil;
 local RESIZE_GRIP = 6;
 
 local function update_shell_resize(cfg, titleX, titleY, width, bodyH, barH)
@@ -2296,7 +2335,6 @@ local function update_shell_resize(cfg, titleX, titleY, width, bodyH, barH)
         local hitT = on_edge(my, y1) and mx >= (x1 - grip) and mx <= (x2 + grip);
         local hitB = on_edge(my, y2) and mx >= (x1 - grip) and mx <= (x2 + grip);
         if (hitL or hitR or hitT or hitB) then
-            shellDrag = nil;
             shellResize = {
                 L = hitL,
                 R = hitR,
@@ -2350,47 +2388,6 @@ local function update_shell_resize(cfg, titleX, titleY, width, bodyH, barH)
 
     if (mouse_released(0)) then
         shellResize = nil;
-    end
-    return titleX, titleY, false;
-end
-
--- Move title+body together from one shared origin so they never desync while dragging.
-local function update_shell_drag(cfg, titleX, titleY, width, barH, resizing)
-    if (resizing or ui.modal_open()) then
-        shellDrag = nil;
-        return titleX, titleY, false;
-    end
-
-    local mx, my = mouse_pos();
-    local glyph = px(TITLE_GLYPH);
-    local padX = px(TITLE_PAD_X);
-    local dragL = titleX + padX + glyph + px(4);
-    local dragR = titleX + width - padX - glyph - px(4);
-    local inDrag = mx >= dragL and mx < dragR and my >= titleY and my < (titleY + barH);
-
-    if (shellDrag == nil and mouse_clicked(0) and inDrag) then
-        shellDrag = {
-            mx = mx,
-            my = my,
-            x = titleX,
-            y = titleY,
-        };
-    end
-
-    if (shellDrag == nil) then
-        return titleX, titleY, false;
-    end
-
-    if (mouse_held(0)) then
-        local nextX = math.floor(shellDrag.x + (mx - shellDrag.mx) + 0.5);
-        local nextY = math.floor(shellDrag.y + (my - shellDrag.my) + 0.5);
-        cfg.windowX = nextX;
-        cfg.windowY = nextY;
-        return nextX, nextY, true;
-    end
-
-    if (mouse_released(0)) then
-        shellDrag = nil;
     end
     return titleX, titleY, false;
 end
@@ -2501,14 +2498,19 @@ local function draw_group_tabs(state, cfg)
     ensure_group_order(cfg);
     local startX = imgui.GetCursorPosX();
     local startY = imgui.GetCursorPosY();
-    local width = letter_tab_width();
     local indent = px(ROUND);
     local groups = ordered_groups(cfg);
-    if (imgui.SetCursorPosX ~= nil) then
-        imgui.SetCursorPosX(startX + indent);
-    end
+    local usable = math.max(1, remaining_width() - indent * 2);
+    local ideal = math.max(px(56), letter_tab_width());
+    local perRow = math.max(1, math.min(#groups, math.floor(usable / ideal)));
+    local width = math.floor(usable / perRow);
+    local rowH = px(30);
     for index, group in ipairs(groups) do
-        if (index > 1) then
+        local column = (index - 1) % perRow;
+        local row = math.floor((index - 1) / perRow);
+        if (column == 0 and imgui.SetCursorPos ~= nil) then
+            imgui.SetCursorPos({ startX + indent, startY + row * rowH });
+        elseif (index > 1) then
             imgui.SameLine(0, 0);
         end
         local clicked = nav_button(group.label, 'nav' .. group.id, state.page == group.id, width);
@@ -2520,7 +2522,8 @@ local function draw_group_tabs(state, cfg)
         end
     end
     if (imgui.SetCursorPos ~= nil) then
-        imgui.SetCursorPos({ startX, startY + px(30) - px(GAP) });
+        local rows = math.max(1, math.ceil(#groups / perRow));
+        imgui.SetCursorPos({ startX, startY + rows * rowH - px(GAP) });
         submit_space(0);
     end
 end
@@ -2533,13 +2536,23 @@ local function draw_fav_tabs(state, cfg, save)
     if (imgui.SetCursorPosX ~= nil) then
         imgui.SetCursorPosX(startX + indent);
     end
+    local usable = math.max(1, remaining_width() - indent);
+    local right = startX + indent + usable;
+    local cursorX = startX + indent;
+    local row = 0;
+    local rowH = px(30);
     local current = selected_fav_tab(state, cfg);
     for index, tab in ipairs(cfg.favoriteTabs) do
-        if (index > 1) then
+        local width = math.max(px(48), math.ceil(text_px(tab.name or '') + px(20)));
+        if (cursorX > startX + indent and cursorX + width > right and imgui.SetCursorPos ~= nil) then
+            row = row + 1;
+            cursorX = startX + indent;
+            imgui.SetCursorPos({ cursorX, startY + row * rowH });
+        elseif (index > 1) then
             imgui.SameLine(0, 0);
         end
-        local width = math.max(px(48), math.ceil(text_px(tab.name or '') + px(20)));
         local clicked = nav_button(tab.name or 'Tab', 'favtab' .. tab.id, current.id == tab.id, width);
+        cursorX = cursorX + width;
         note_tab_drag('fav', index);
         accept_tab_drop('fav', index, cfg.favoriteTabs);
         note_fav_menu(state, tab);
@@ -2548,7 +2561,14 @@ local function draw_fav_tabs(state, cfg, save)
             state.section = 'favorites';
         end
     end
-    imgui.SameLine(0, 0);
+    local addW = px(30);
+    if (cursorX > startX + indent and cursorX + addW > right and imgui.SetCursorPos ~= nil) then
+        row = row + 1;
+        cursorX = startX + indent;
+        imgui.SetCursorPos({ cursorX, startY + row * rowH });
+    else
+        imgui.SameLine(0, 0);
+    end
     if (nav_button('+', 'favtabadd', false, px(30)) and not tabDrag.moved) then
         add_fav_tab(state, cfg, save);
     end
@@ -2561,7 +2581,7 @@ local function draw_fav_tabs(state, cfg, save)
         end
     end
     if (imgui.SetCursorPos ~= nil) then
-        imgui.SetCursorPos({ startX, startY + px(30) - px(GAP) });
+        imgui.SetCursorPos({ startX, startY + (row + 1) * rowH - px(GAP) });
         submit_space(0);
     end
     fav_tab_menu(state, cfg);
@@ -2619,7 +2639,7 @@ local function favorite_picker(cfg, choiceId)
         tabLabels[#tabLabels + 1] = tab.name or 'Tab';
     end
     local flags = ImGuiComboFlags_PopupAlignLeft;
-    local opened, centered, listW = widgets.begin_labels_combo('##favpicktab', shown, tabLabels, flags, MODAL_COMBO_W);
+    local opened, centered, listW = widgets.begin_labels_combo('##favpicktab', shown, tabLabels, flags, 'fill');
     local picked = choiceId;
     if (opened) then
         for _, tab in ipairs(cfg.favoriteTabs) do
@@ -2645,6 +2665,11 @@ local function center_buttons(widths)
     if (avail > total and imgui.SetCursorPosX ~= nil) then
         imgui.SetCursorPosX(imgui.GetCursorPosX() + (avail - total) * 0.5);
     end
+end
+
+local function modal_button_width()
+    local available = math.max(1, remaining_width() - px(GAP));
+    return math.max(1, math.min(px(110), math.floor(available * 0.5)));
 end
 
 local function claim_modal_capture()
@@ -2709,8 +2734,9 @@ local function begin_modal(id, title, request)
     local sw, sh = screen_size();
     local _, padX, padY, barH = title_metrics();
     local pad = px(PAD);
-    -- Width hugs the content field so left/right padding match.
-    local modalW = px(280) + pad * 2;
+    local maxContentW = math.max(1, sw - pad * 2 - px(32));
+    local contentW = math.min(px(320), maxContentW);
+    local modalW = contentW + pad * 2;
     local bodyH = modalHeights[id] or px(120);
     local totalH = barH + bodyH - 1;
     local left = math.floor((sw - modalW) * 0.5);
@@ -2765,7 +2791,7 @@ local function begin_modal(id, title, request)
     if (imgui.Begin('###gmhelper_modal_title_' .. id, open, titleFlags)) then
         local titleFont = push_font();
         fontScaled = titleFont;
-        paint_panel(rounding, ROUND_TOP, theme.colors.titleActive, { 0xc5 / 255, 0x51 / 255, 0x51 / 255, 0.28 });
+        paint_panel(rounding, ROUND_TOP, theme.colors.glass, theme.colors.accentSoft);
         draw_modal_title_label(title);
         pop_font(titleFont);
     end
@@ -2857,13 +2883,13 @@ local function draw_fav_modal(state, cfg, save)
         return;
     end
     state.favPickRequest = false;
-    imgui.Text('Choose a favorites tab for this command.');
+    widgets.helper_text('Choose a favorites tab for this command.', theme.colors.text);
     imgui.Spacing();
     state.favPick.tabId = favorite_picker(cfg, state.favPick.tabId);
     imgui.Spacing();
-    local buttonW = px(110);
+    local buttonW = modal_button_width();
     center_buttons({ buttonW, buttonW });
-    if (imgui.Button('Confirm', { buttonW, 0 })) then
+    if (widgets.button('Confirm', 'favpickconfirm', buttonW, 'primary')) then
         add_favorite_to(
             cfg,
             state.favPick.tabId,
@@ -2876,7 +2902,7 @@ local function draw_fav_modal(state, cfg, save)
         state.favPick = nil;
     end
     imgui.SameLine();
-    if (imgui.Button('Cancel', { buttonW, 0 })) then
+    if (widgets.button('Cancel', 'favpickcancel', buttonW, 'secondary')) then
         state.favPick = nil;
     end
     end_modal('favpick');
@@ -2900,7 +2926,7 @@ local function draw_rename_modal(state, cfg, save)
         return;
     end
     state.favRenameRequest = false;
-    imgui.Text('Rename this favorites tab.');
+    widgets.helper_text('Rename this favorites tab.', theme.colors.text);
     imgui.Spacing();
     imgui.SetNextItemWidth(-1);
     local enterFlags = ImGuiInputTextFlags_EnterReturnsTrue or 64;
@@ -2916,16 +2942,16 @@ local function draw_rename_modal(state, cfg, save)
         result = false;
     end
     imgui.Spacing();
-    local buttonW = px(110);
+    local buttonW = modal_button_width();
     center_buttons({ buttonW, buttonW });
-    if (imgui.Button('Confirm', { buttonW, 0 }) or result == true) then
+    if (widgets.button('Confirm', 'favrenameconfirm', buttonW, 'primary') or result == true) then
         if (apply_rename(tab, state, save)) then
             state.favRenameId = nil;
             state.favRenameRequest = false;
         end
     end
     imgui.SameLine();
-    if (imgui.Button('Cancel', { buttonW, 0 })) then
+    if (widgets.button('Cancel', 'favrenamecancel', buttonW, 'secondary')) then
         state.favRenameId = nil;
         state.favRenameRequest = false;
     end
@@ -2966,15 +2992,15 @@ local function draw_delete_modal(state, cfg, save)
     end
     imgui.PopStyleColor();
     imgui.Spacing();
-    local buttonW = px(110);
+    local buttonW = modal_button_width();
     center_buttons({ buttonW, buttonW });
-    if (imgui.Button('Confirm', { buttonW, 0 })) then
+    if (widgets.button('Delete', 'favdeleteconfirm', buttonW, 'danger')) then
         delete_fav_tab(state, cfg, save, state.favDeleteId);
         state.favDeleteId = nil;
         state.favDeleteRequest = false;
     end
     imgui.SameLine();
-    if (imgui.Button('Cancel', { buttonW, 0 })) then
+    if (widgets.button('Cancel', 'favdeletecancel', buttonW, 'secondary')) then
         state.favDeleteId = nil;
         state.favDeleteRequest = false;
     end
@@ -3039,8 +3065,8 @@ function ui.draw(state, cfg, save)
 
     local sw, sh = screen_size();
     local totalDrawnH = bodyH + barH - 1;
-    local titleX = cfg.windowX;
-    local titleY = cfg.windowY;
+    local titleX = state.pendingWindowX or cfg.windowX;
+    local titleY = state.pendingWindowY or cfg.windowY;
     local placeOnce = state.applyWindowPos ~= false;
     if (titleX == nil or titleY == nil) then
         titleX = math.floor((sw - width) * 0.5);
@@ -3063,17 +3089,66 @@ function ui.draw(state, cfg, save)
         placeOnce = true;
         state.applyWindowSize = true;
         state.geomDirty = true;
-    else
-        titleX, titleY, dragging = update_shell_drag(cfg, titleX, titleY, width, barH, resizing);
-        if (dragging) then
-            state.geomDirty = true;
-        end
     end
     local open = { true };
-    -- Title is NoMove; shell drag moves title+body from one shared origin each frame.
-    local titleFlags = bor_flags(ImGuiWindowFlags_NoTitleBar, NO_RESIZE, NO_MOVE, NO_SCROLL, NO_SCROLL_MOUSE, NO_BACKGROUND, NO_DOCK);
+    local titleFlags = bor_flags(ImGuiWindowFlags_NoTitleBar, NO_RESIZE, NO_SCROLL, NO_SCROLL_MOUSE, NO_BACKGROUND, NO_DOCK);
+    if (resizing) then
+        titleFlags = bit.bor(titleFlags, NO_MOVE);
+    end
 
-    if (not state.collapsed) then
+    -- Let ImGui move the title natively, then anchor the body to its current position.
+    if (imgui.SetNextWindowDockID ~= nil) then
+        pcall(imgui.SetNextWindowDockID, 0, condAlways);
+    end
+    if (placeOnce or resizing) then
+        imgui.SetNextWindowPos({ titleX, titleY }, condAlways);
+    end
+    if (placeOnce) then
+        state.applyWindowPos = false;
+    end
+    imgui.SetNextWindowSize({ width, barH }, condAlways);
+    imgui.SetNextWindowBgAlpha(0);
+    local titleStyles = push_styles({
+        { ImGuiStyleVar_WindowPadding, { padX, padY } },
+        { ImGuiStyleVar_WindowRounding, 0 },
+        { ImGuiStyleVar_WindowBorderSize, 0 },
+    });
+    local titleFont = false;
+    if (imgui.Begin('###gmhelper_title', open, titleFlags)) then
+        titleFont = push_font();
+        fontScaled = titleFont;
+        widgets.configure(scale, fontScaled);
+        widgets.sync_widths(commands);
+
+        if (not resizing and imgui.GetWindowPos ~= nil) then
+            local nextX, nextY = window_pos();
+            nextX = math.floor(nextX + 0.5);
+            nextY = math.floor(nextY + 0.5);
+            if (nextX ~= titleX or nextY ~= titleY) then
+                titleX = nextX;
+                titleY = nextY;
+                state.pendingWindowX = nextX;
+                state.pendingWindowY = nextY;
+                state.geomDirty = true;
+                state.shellDragging = mouse_held(0);
+            elseif (not mouse_held(0)) then
+                state.shellDragging = false;
+            end
+        else
+            state.shellDragging = false;
+        end
+        dragging = state.shellDragging == true;
+
+        local fill, edge = title_chrome(state.panelFocused);
+        paint_panel(rounding, state.collapsed and ROUND_ALL or ROUND_TOP, fill, edge);
+        draw_title(state);
+        state.panelFocused = window_focused() or dragging or resizing;
+        pop_font(titleFont);
+    end
+    imgui.End();
+    pop_styles(titleStyles);
+
+    if (not state.collapsed and state.visible ~= false) then
         if (imgui.SetNextWindowDockID ~= nil) then
             pcall(imgui.SetNextWindowDockID, 0, condAlways);
         end
@@ -3147,37 +3222,14 @@ function ui.draw(state, cfg, save)
         imgui.End();
         pop_styles(bodyStyles);
     end
-
-    if (imgui.SetNextWindowDockID ~= nil) then
-        pcall(imgui.SetNextWindowDockID, 0, condAlways);
-    end
-    imgui.SetNextWindowPos({ titleX, titleY }, condAlways);
-    if (placeOnce) then
-        state.applyWindowPos = false;
-    end
-    imgui.SetNextWindowSize({ width, barH }, condAlways);
-    imgui.SetNextWindowBgAlpha(0);
-    local titleStyles = push_styles({
-        { ImGuiStyleVar_WindowPadding, { padX, padY } },
-        { ImGuiStyleVar_WindowRounding, 0 },
-        { ImGuiStyleVar_WindowBorderSize, 0 },
-    });
-    local titleFont = false;
-    if (imgui.Begin('###gmhelper_title', open, titleFlags)) then
-        titleFont = push_font();
-        fontScaled = titleFont;
-        widgets.configure(scale, fontScaled);
-        widgets.sync_widths(commands);
-        local fill, edge = title_chrome(state.panelFocused);
-        paint_panel(rounding, state.collapsed and ROUND_ALL or ROUND_TOP, fill, edge);
-        draw_title(state);
-        state.panelFocused = window_focused() or dragging or resizing;
-        pop_font(titleFont);
-    end
-    imgui.End();
-    pop_styles(titleStyles);
     if (state.geomDirty and imgui.IsMouseReleased ~= nil and imgui.IsMouseReleased(0)) then
         state.geomDirty = false;
+        if (state.pendingWindowX ~= nil and state.pendingWindowY ~= nil) then
+            cfg.windowX = state.pendingWindowX;
+            cfg.windowY = state.pendingWindowY;
+            state.pendingWindowX = nil;
+            state.pendingWindowY = nil;
+        end
         save();
     end
     draw_modals(state, cfg, save);
