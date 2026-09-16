@@ -119,7 +119,8 @@ function M.draw_scripts_page(state, cfg, save)
         local item = row.item;
         local label = item.name or item.id or 'Script';
         local y = imgui.GetCursorPosY();
-        kit.draw_line_num(row.slot, numW, startX, y);
+        local refH = kit.text_height();
+        kit.draw_line_num(row.slot, numW, startX, y, refH);
         imgui.SetCursorPos({ startX + numW, y });
         imgui.Text(tostring(label));
         if (index < #cache.rows) then

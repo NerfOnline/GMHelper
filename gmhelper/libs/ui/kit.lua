@@ -544,25 +544,77 @@ function kit.move_item(list, from, to)
     table.insert(list, to, item);
 end
 
-function kit.line_num_width(maxN)
-    local digits = #tostring(math.max(1, math.floor(tonumber(maxN) or 1)));
-    return kit.text_px(string.rep('0', digits)) + kit.px(8);
+kit.lineNumFontSize = 20;
+
+function kit.ensure_line_num_font()
+    if (kit.lineNumFont ~= nil) then
+        return true;
+    end
+    if (kit.lineNumFontFailed == true) then
+        return false;
+    end
+    if (imgui.AddFontFromFileTTF == nil) then
+        kit.lineNumFontFailed = true;
+        return false;
+    end
+    local root = os.getenv('SystemRoot') or os.getenv('WINDIR') or 'C:\\Windows';
+    root = tostring(root):gsub('[/\\]+$', '');
+    local path = root .. '\\Fonts\\ariblk.ttf';
+    local size = kit.lineNumFontSize or 20;
+    local ok, font = pcall(imgui.AddFontFromFileTTF, path, size);
+    if (ok and font ~= nil and font ~= false) then
+        kit.lineNumFont = font;
+        return true;
+    end
+    kit.lineNumFontFailed = true;
+    return false;
 end
 
-function kit.draw_line_num(n, colW, x, y)
+function kit.push_line_num_font()
+    if (not kit.ensure_line_num_font()) then
+        return false;
+    end
+    local size = (kit.lineNumFontSize or 20) * (kit.scale or 1);
+    local ok = pcall(imgui.PushFont, kit.lineNumFont, size);
+    if (ok) then
+        return true;
+    end
+    ok = pcall(imgui.PushFont, kit.lineNumFont);
+    return ok == true;
+end
+
+function kit.line_num_width(maxN)
+    local digits = #tostring(math.max(1, math.floor(tonumber(maxN) or 1)));
+    local sample = string.rep('0', digits);
+    local pushed = kit.push_line_num_font();
+    local width = kit.text_px(sample);
+    kit.pop_font(pushed);
+    return width + kit.px(16);
+end
+
+function kit.draw_line_num(n, colW, x, y, refH)
     if (n == nil or colW == nil or colW <= 0) then
         return;
     end
     local label = tostring(math.floor(tonumber(n) or 0));
+    local pushed = kit.push_line_num_font();
     local tw = kit.text_px(label);
-    if (y ~= nil) then
-        imgui.SetCursorPos({ x + math.max(0, colW - tw - kit.px(4)), y });
+    local numH = kit.text_height();
+    local gap = kit.px(10);
+    local drawX = x + math.max(0, colW - tw - gap);
+    local drawY = y;
+    if (y ~= nil and refH ~= nil and numH > 0) then
+        drawY = y + (refH - numH) * 0.5;
+    end
+    if (drawY ~= nil) then
+        imgui.SetCursorPos({ drawX, drawY });
     else
-        imgui.SetCursorPosX(x + math.max(0, colW - tw - kit.px(4)));
+        imgui.SetCursorPosX(drawX);
     end
     imgui.PushStyleColor(ImGuiCol_Text, theme.colors.muted);
     imgui.Text(label);
     imgui.PopStyleColor();
+    kit.pop_font(pushed);
 end
 
 function kit.run_payload(cfg, payload, save, errors, errorKey, state)

@@ -198,7 +198,7 @@ function M.draw_command(command, bag, mode, onFavorite, onRemove, onExecute, err
     end
 
     if (numW > 0) then
-        kit.draw_line_num(lineNum, numW, originX, nameY);
+        kit.draw_line_num(lineNum, numW, originX, nameY, textH);
     end
 
     imgui.SetCursorPos({ startX, nameY });

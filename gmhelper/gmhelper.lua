@@ -44,6 +44,7 @@ end
 
 ashita.events.register('load', 'gmhelper_load', function()
     widgets.reset_scrolls();
+    require('libs.ui.kit').ensure_line_num_font();
     print(chat.header(addon.name):append(chat.message('Loaded. Use ')):append(chat.success('/gmh')):append(chat.message(' or ')):append(chat.success('/gmhelper')):append(chat.message(' to open.')));
 end);
 
