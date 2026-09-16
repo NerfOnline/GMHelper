@@ -17,7 +17,7 @@ local function entry(id)
     if (current ~= nil) then
         return current;
     end
-    local meta = require('data.lookups.' .. id .. '.meta');
+    local meta = require('data.' .. id .. '.meta');
     current = {
         id = id,
         meta = meta,
@@ -59,7 +59,7 @@ local function append_chunk(current)
         current.status = 'ready';
         return false;
     end
-    local chunk = require(('data.lookups.%s.chunk_%02d'):format(current.id, index));
+    local chunk = require(('data.%s.%d'):format(current.id, index));
     for _, row in ipairs(chunk) do
         current.rows[#current.rows + 1] = row;
         if (row.zone ~= nil and current.zoneSeen[row.zone] == nil) then

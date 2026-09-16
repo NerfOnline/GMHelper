@@ -1,5 +1,5 @@
 --[[
-* Chunked list builds for Favorites / Presets / History.
+* Chunked list builds for Favorites / Scripts / Presets / History.
 * One chunk per frame so huge custom lists do not hitch.
 ]]
 

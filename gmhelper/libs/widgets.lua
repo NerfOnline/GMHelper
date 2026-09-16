@@ -619,7 +619,13 @@ local function cats_use_id_prefix(cats)
 end
 
 local function cats_use_zone_groups(cats)
-    return cats_use_id_prefix(cats);
+    for _, cat in ipairs(cats) do
+        local meta = lookup.meta(cat);
+        if (meta ~= nil and meta.zoneFilter == true) then
+            return true;
+        end
+    end
+    return false;
 end
 
 local function display_name_for_measure(cat, name)
@@ -697,7 +703,7 @@ local function measure_combo(field)
         else
             local label = display_name_for_measure(cat, lookup.longestName(cat));
             local width = fit_text(label);
-            if (cat == 'mobs' or cat == 'npcs') then
+            if (lookup.meta(cat) ~= nil and lookup.meta(cat).zoneFilter == true) then
                 widest = measure_zone_width(cat, widest);
             end
             if (width > widest) then
@@ -811,13 +817,18 @@ function widgets.begin_labels_combo(id, preview, labels, flags, fixedW, centerPr
             end
             pcall(imgui.SetWindowSize, { displayW, height });
         end
+        local centerOpts = centerPreview == true;
         if (imgui.PushStyleVar ~= nil and ImGuiStyleVar_SelectableTextAlign ~= nil) then
-            imgui.PushStyleVar(ImGuiStyleVar_SelectableTextAlign, { 0, 0.5 });
-            return true, true, displayW;
+            if (centerOpts) then
+                imgui.PushStyleVar(ImGuiStyleVar_SelectableTextAlign, { 0.5, 0.5 });
+            else
+                imgui.PushStyleVar(ImGuiStyleVar_SelectableTextAlign, { 0, 0.5 });
+            end
+            return true, true, displayW, centerOpts;
         end
-        return true, false, displayW;
+        return true, false, displayW, centerOpts;
     end
-    return false, false, displayW;
+    return false, false, displayW, false;
 end
 
 function widgets.end_labels_combo(opened, alignPushed)
@@ -829,8 +840,9 @@ function widgets.end_labels_combo(opened, alignPushed)
     end
 end
 
---- Settings combo option: full-width hit/highlight; label text left-aligned.
-function widgets.labels_combo_option(id, label, selected, listW)
+--- Settings/plain combo option: full-width hit/highlight.
+--- Pass centerText=true to center the label (welcome tier); settings stay left-aligned.
+function widgets.labels_combo_option(id, label, selected, listW, centerText)
     listW = listW or widgets.px(120);
     local rowH = combo_line_height();
     local text = tostring(label or '');
@@ -868,16 +880,20 @@ function widgets.labels_combo_option(id, label, selected, listW)
     if (hot) then
         theme.paint_row_highlight(x1, y1, x2, y2, widgets.px(3));
     end
-    paint_combo_text(
-        x1,
-        y1,
-        x2,
-        y2,
-        wraps,
-        theme.col32(theme.colors.text),
-        x1 + widgets.px(8),
-        false
-    );
+    if (centerText) then
+        paint_combo_text(x1, y1, x2, y2, wraps, theme.col32(theme.colors.text), nil, true);
+    else
+        paint_combo_text(
+            x1,
+            y1,
+            x2,
+            y2,
+            wraps,
+            theme.col32(theme.colors.text),
+            x1 + widgets.px(8),
+            false
+        );
+    end
     imgui.PopStyleColor(3);
     if (spacingPushed > 0 and imgui.PopStyleVar ~= nil) then
         imgui.PopStyleVar(spacingPushed);
@@ -1148,9 +1164,13 @@ local function build_zone_index(list)
     return zones;
 end
 
+local function zone_gap_height(rowH)
+    return math.max(widgets.px(5), math.floor(rowH * 0.3 + 0.5));
+end
+
 local function zone_span(zone, isLast)
-    -- header + separator + entries (+ blank line before the next zone)
-    return 2 + zone.count + (isLast and 0 or 1);
+    -- Combined header+separator, entries, optional short gap before next zone.
+    return 1 + zone.count + (isLast and 0 or 1);
 end
 
 local function display_count(zones, matchCount)
@@ -1162,6 +1182,71 @@ local function display_count(zones, matchCount)
         total = total + zone_span(zones[index], index == #zones);
     end
     return total;
+end
+
+-- Height in pixels for virtual slots [fromSlot, toSlot) with zone chrome.
+local function slots_height(zones, fromSlot, toSlot, rowH)
+    if (toSlot <= fromSlot) then
+        return 0;
+    end
+    if (zones == nil) then
+        return (toSlot - fromSlot) * rowH;
+    end
+    local gapH = zone_gap_height(rowH);
+    local pixels = 0;
+    local at = 0;
+    for zoneIndex = 1, #zones do
+        local zone = zones[zoneIndex];
+        local isLast = zoneIndex == #zones;
+        local headerAt = at + 1;
+        local entryLast = at + 1 + zone.count;
+        local blankAt = (not isLast) and (entryLast + 1) or nil;
+        local zoneEnd = at + zone_span(zone, isLast);
+        local slot = at + 1;
+        while (slot <= zoneEnd) do
+            if (slot >= toSlot) then
+                return pixels;
+            end
+            if (slot >= fromSlot) then
+                if (blankAt ~= nil and slot == blankAt) then
+                    pixels = pixels + gapH;
+                else
+                    pixels = pixels + rowH;
+                end
+            end
+            slot = slot + 1;
+        end
+        at = zoneEnd;
+    end
+    return pixels;
+end
+
+-- First visible slot index and pixel offset for that slot, given scrollY.
+local function first_visible_slot(zones, scrollY, rowH, total)
+    if (zones == nil) then
+        local first = math.max(1, math.floor(scrollY / rowH) + 1);
+        return first, (first - 1) * rowH;
+    end
+    local gapH = zone_gap_height(rowH);
+    local y = 0;
+    local at = 0;
+    for zoneIndex = 1, #zones do
+        local zone = zones[zoneIndex];
+        local isLast = zoneIndex == #zones;
+        local headerAt = at + 1;
+        local entryLast = at + 1 + zone.count;
+        local blankAt = (not isLast) and (entryLast + 1) or nil;
+        local zoneEnd = at + zone_span(zone, isLast);
+        for slot = at + 1, zoneEnd do
+            local h = (blankAt ~= nil and slot == blankAt) and gapH or rowH;
+            if (y + h > scrollY) then
+                return slot, y;
+            end
+            y = y + h;
+        end
+        at = zoneEnd;
+    end
+    return math.max(1, total), y;
 end
 
 local function search_cache(popupId)
@@ -1498,15 +1583,29 @@ local function size_open_combo_popup(width, minH)
     pcall(imgui.SetWindowSize, { width, height });
 end
 
-local function paint_combo_separator(x1, y1, x2, y2)
+local function paint_zone_header(x1, y1, x2, y2, wraps, rowH)
     local draw = imgui.GetWindowDrawList ~= nil and imgui.GetWindowDrawList() or nil;
-    if (draw == nil or draw.AddLine == nil) then
-        return;
+    local padX = x1 + widgets.px(8);
+    local sepGap = widgets.px(2);
+    local lineY = y2 - sepGap;
+    -- Sit the label closer to the separator; inter-zone air comes from the short gap row.
+    local textBottom = math.max(y1 + 1, lineY - widgets.px(1));
+    paint_combo_text(
+        x1,
+        y1,
+        x2,
+        textBottom,
+        wraps,
+        theme.col32(theme.colors.peach),
+        padX,
+        false,
+        draw
+    );
+    if (draw ~= nil and draw.AddLine ~= nil) then
+        local pad = widgets.px(4);
+        local color = theme.col32(theme.colors.borderSoft or theme.colors.peach);
+        pcall(draw.AddLine, draw, { x1 + pad, lineY }, { x2 - pad, lineY }, color, 1);
     end
-    local pad = widgets.px(4);
-    local midY = math.floor((y1 + y2) * 0.5 + 0.5);
-    local color = theme.col32(theme.colors.borderSoft or theme.colors.peach);
-    pcall(draw.AddLine, draw, { x1 + pad, midY }, { x2 - pad, midY }, color, 1);
 end
 
 local function draw_combo_list(popupId, cats, currentId, width, onSelect, values, field)
@@ -1627,16 +1726,16 @@ local function draw_combo_list(popupId, cats, currentId, width, onSelect, values
                 end
             end
 
-            local first = math.max(1, math.floor(scrollY / rowH) + 1);
-            local visible = math.max(1, math.ceil(viewH / rowH) + 2);
+            local first, skipH = first_visible_slot(zones, scrollY, rowH, total);
+            local visible = math.max(1, math.ceil(viewH / rowH) + 3);
             local last = math.min(total, first + visible);
             local rowW = region_width(listW);
             if (rowW > listW) then
                 rowW = listW;
             end
             textMax = math.max(1, rowW - widgets.px(4));
-            if (first > 1) then
-                imgui.Dummy({ 1, (first - 1) * rowH });
+            if (skipH > 0) then
+                imgui.Dummy({ 1, skipH });
             end
 
             local zoneIndex = 1;
@@ -1653,6 +1752,7 @@ local function draw_combo_list(popupId, cats, currentId, width, onSelect, values
                 end
             end
 
+            local gapH = zone_gap_height(rowH);
             for index = first, last do
                 local kind = 'row';
                 local row = nil;
@@ -1662,17 +1762,13 @@ local function draw_combo_list(popupId, cats, currentId, width, onSelect, values
                         local zone = zones[zoneIndex];
                         local isLast = zoneIndex == #zones;
                         local headerAt = at + 1;
-                        local sepAt = at + 2;
-                        local entryFirst = at + 3;
-                        local entryLast = at + 2 + zone.count;
+                        local entryFirst = at + 2;
+                        local entryLast = at + 1 + zone.count;
                         local blankAt = (not isLast) and (entryLast + 1) or nil;
                         local zoneEnd = at + zone_span(zone, isLast);
                         if (index == headerAt) then
                             kind = 'header';
                             text = zone.label;
-                            break;
-                        elseif (index == sepAt) then
-                            kind = 'sep';
                             break;
                         elseif (index >= entryFirst and index <= entryLast) then
                             kind = 'row';
@@ -1694,11 +1790,7 @@ local function draw_combo_list(popupId, cats, currentId, width, onSelect, values
                 end
 
                 if (kind == 'blank') then
-                    imgui.Dummy({ rowW, rowH });
-                elseif (kind == 'sep') then
-                    imgui.Dummy({ rowW, rowH });
-                    local x1, y1, x2, y2 = item_bounds(rowW, rowH);
-                    paint_combo_separator(x1, y1, x2, y2);
+                    imgui.Dummy({ rowW, gapH });
                 else
                     local line = {
                         text = text,
@@ -1710,16 +1802,7 @@ local function draw_combo_list(popupId, cats, currentId, width, onSelect, values
                     if (kind == 'header') then
                         imgui.Dummy({ rowW, height });
                         local x1, y1, x2, y2 = item_bounds(rowW, height);
-                        paint_combo_text(
-                            x1,
-                            y1,
-                            x2,
-                            y2,
-                            wraps,
-                            theme.col32(theme.colors.peach),
-                            x1 + widgets.px(8),
-                            false
-                        );
+                        paint_zone_header(x1, y1, x2, y2, wraps, rowH);
                     else
                         local selected = row_matches_selection(row, currentId, values, field);
                         imgui.PushStyleColor(ImGuiCol_Header, theme.colors.clear);
@@ -1758,7 +1841,7 @@ local function draw_combo_list(popupId, cats, currentId, width, onSelect, values
             end
 
             if (last < total) then
-                imgui.Dummy({ 1, (total - last) * rowH });
+                imgui.Dummy({ 1, slots_height(zones, last + 1, total + 1, rowH) });
             end
         end
         if (imgui.GetScrollY ~= nil) then

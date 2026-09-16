@@ -1,8 +1,10 @@
 --[[
-* Builds and sends a GM command as say chat, independent of the active chat tab.
+* Builds and sends a GM command as unity chat, independent of the active chat tab.
 ]]
 
 require('common');
+
+local tell = require('libs.tell');
 
 local say = {};
 
@@ -21,12 +23,14 @@ function say.fieldValue(values, key)
 end
 
 --[[
-* Returns the say payload (without /say) or nil and an error string.
+* Returns the chat payload (without /unity) or nil and an error string.
 * Empty optional arguments are omitted. Placeholders are never part of values.
 ]]
 function say.build(command, values)
     for _, field in ipairs(command.fields) do
-        if (not field.optional and say.fieldValue(values, field.key) == '') then
+        local raw = say.fieldValue(values, field.key);
+        local value = tell.is_player_field(field) and tell.resolve(raw) or raw;
+        if (not field.optional and value == '') then
             return nil, field.label .. ' is required.';
         end
     end
@@ -34,7 +38,8 @@ function say.build(command, values)
     local parts = { '!' .. command.id };
     local lastFilled = 0;
     for index, field in ipairs(command.fields) do
-        local value = say.fieldValue(values, field.key);
+        local raw = say.fieldValue(values, field.key);
+        local value = tell.is_player_field(field) and tell.resolve(raw) or raw;
         if (value ~= '') then
             if (index > lastFilled + 1) then
                 return nil, 'Fill earlier fields before later ones.';
@@ -54,7 +59,7 @@ function say.send(payload)
     if (payload:sub(1, 1) ~= '!') then
         return false, 'Command must start with !.';
     end
-    AshitaCore:GetChatManager():QueueCommand(1, '/say ' .. payload);
+    AshitaCore:GetChatManager():QueueCommand(1, '/unity ' .. payload);
     return true;
 end
 

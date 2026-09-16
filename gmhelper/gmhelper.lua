@@ -17,6 +17,8 @@ local chat = require('chat');
 local imgui = require('imgui');
 local lookup = require('libs.lookup');
 local store = require('libs.store');
+local shortcut = require('libs.shortcut');
+local tell = require('libs.tell');
 local ui = require('libs.ui');
 local widgets = require('libs.widgets');
 
@@ -50,15 +52,24 @@ ashita.events.register('unload', 'gmhelper_unload', function()
 end);
 
 ashita.events.register('command', 'gmhelper_command', function(e)
+    tell.on_command(e);
     local args = e.command:args();
     if (#args == 0 or not is_toggle_command(args[1])) then
         return;
     end
     e.blocked = true;
+    cfg = store.cfg();
+    if (shortcut.handle(args, cfg, state, save)) then
+        return;
+    end
     state.visible = not state.visible;
     if (not state.visible) then
         store.save();
     end
+end);
+
+ashita.events.register('packet_out', 'gmhelper_packet_out', function(e)
+    tell.on_packet_out(e);
 end);
 
 local STEP_UP = 0xC8;

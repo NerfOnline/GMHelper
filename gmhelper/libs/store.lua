@@ -3,7 +3,7 @@
 *   settings  -> Settings tab options
 *   favorites -> favorite tabs / commands
 *   history   -> executed command history entries
-*   presets   -> preset lists
+*   scripts   -> script tabs / custom scripts
 ]]
 
 require('common');
@@ -15,7 +15,7 @@ local store = {};
 local settingsCfg;
 local favCfg;
 local histCfg;
-local presetCfg;
+local scriptCfg;
 local cfg;
 
 local settingsDefaults = T{
@@ -44,8 +44,9 @@ local histDefaults = T{
     entries = T{},
 };
 
-local presetDefaults = T{
-    items = T{},
+local scriptDefaults = T{
+    scriptTabs = T{},
+    nextScriptId = 1,
 };
 
 local function strip_legacy(target)
@@ -58,6 +59,8 @@ local function strip_legacy(target)
     target.history = nil;
     target.presets = nil;
     target.presetScale = nil;
+    target.scriptTabs = nil;
+    target.nextScriptId = nil;
 end
 
 local function normalize_settings(target)
@@ -146,6 +149,38 @@ local function normalize_history(entries)
     end
 end
 
+local function ensure_script_tabs(cfgTable)
+    if (type(cfgTable.scriptTabs) ~= 'table') then
+        cfgTable.scriptTabs = T{};
+    end
+    if (cfgTable.nextScriptId == nil) then
+        cfgTable.nextScriptId = 1;
+    end
+
+    -- Drop legacy nested Presets tab (now a top-level hardcoded section).
+    local tabs = T{};
+    for _, tab in ipairs(cfgTable.scriptTabs) do
+        if (type(tab) == 'table' and tab.id ~= 'presets') then
+            tab.locked = nil;
+            if (type(tab.items) ~= 'table') then
+                tab.items = T{};
+            end
+            if (tab.name == nil or tab.name == '') then
+                tab.name = 'Tab';
+            end
+            if (tab.id == nil or tab.id == '') then
+                cfgTable.nextScriptId = (cfgTable.nextScriptId or 1) + 1;
+                tab.id = 'tab' .. tostring(cfgTable.nextScriptId);
+            end
+            tabs[#tabs + 1] = tab;
+        end
+    end
+    if (#tabs == 0) then
+        tabs[1] = T{ id = 'default', name = 'Default', items = T{} };
+    end
+    cfgTable.scriptTabs = tabs;
+end
+
 local function ensure_defaults()
     if (type(favCfg.favoriteTabs) ~= 'table') then
         favCfg.favoriteTabs = T{};
@@ -161,9 +196,7 @@ local function ensure_defaults()
     if (type(histCfg.entries) ~= 'table') then
         histCfg.entries = T{};
     end
-    if (type(presetCfg.items) ~= 'table') then
-        presetCfg.items = T{};
-    end
+    ensure_script_tabs(scriptCfg);
     normalize_history(histCfg.entries);
 end
 
@@ -179,10 +212,13 @@ local function build_cfg()
             if (key == 'history') then
                 return histCfg.entries;
             end
-            if (key == 'presets') then
-                return presetCfg.items;
+            if (key == 'scriptTabs') then
+                return scriptCfg.scriptTabs;
             end
-            if (key == 'favorites') then
+            if (key == 'nextScriptId') then
+                return scriptCfg.nextScriptId;
+            end
+            if (key == 'presets' or key == 'favorites') then
                 return nil;
             end
             return settingsCfg[key];
@@ -200,11 +236,15 @@ local function build_cfg()
                 histCfg.entries = value;
                 return;
             end
-            if (key == 'presets') then
-                presetCfg.items = value;
+            if (key == 'scriptTabs') then
+                scriptCfg.scriptTabs = value;
                 return;
             end
-            if (key == 'favorites') then
+            if (key == 'nextScriptId') then
+                scriptCfg.nextScriptId = value;
+                return;
+            end
+            if (key == 'presets' or key == 'favorites') then
                 return;
             end
             settingsCfg[key] = value;
@@ -224,17 +264,18 @@ end
 function store.save()
     strip_legacy(settingsCfg);
     normalize_settings(settingsCfg);
+    ensure_script_tabs(scriptCfg);
     settings.save('settings');
     settings.save('favorites');
     settings.save('history');
-    settings.save('presets');
+    settings.save('scripts');
 end
 
 function store.init()
     settingsCfg = settings.load(settingsDefaults, 'settings');
     favCfg = settings.load(favDefaults, 'favorites');
     histCfg = settings.load(histDefaults, 'history');
-    presetCfg = settings.load(presetDefaults, 'presets');
+    scriptCfg = settings.load(scriptDefaults, 'scripts');
     normalize_settings(settingsCfg);
     ensure_defaults();
     build_cfg();
@@ -275,15 +316,13 @@ function store.init()
         settings.save('history');
     end);
 
-    settings.register('presets', 'gmhelper_presets', function(s)
+    settings.register('scripts', 'gmhelper_scripts', function(s)
         if (s ~= nil) then
-            presetCfg = s;
-            if (type(presetCfg.items) ~= 'table') then
-                presetCfg.items = T{};
-            end
+            scriptCfg = s;
+            ensure_script_tabs(scriptCfg);
             build_cfg();
         end
-        settings.save('presets');
+        settings.save('scripts');
     end);
 
     return cfg;
