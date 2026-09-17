@@ -111,10 +111,11 @@ function M.widest_field(fields, hiddenKeys)
     return widest;
 end
 
-function M.draw_command(command, bag, mode, onFavorite, onRemove, onExecute, errorText, nameCol, showSeparator, uniqueKey, favorited, lineNum, lineNumW)
+function M.draw_command(command, bag, mode, onFavorite, onRemove, onExecute, errorText, nameCol, showSeparator, uniqueKey, favorited, lineNum, lineNumW, dragKind, dragList, dragState, dragListKey, dragLabel)
     if (showSeparator == nil) then
         showSeparator = true;
     end
+    local isGhost = (mode == 'ghost');
     local rowId = mode .. tostring(uniqueKey or command.id);
     local originX = imgui.GetCursorPosX();
     local startY = imgui.GetCursorPosY();
@@ -126,8 +127,13 @@ function M.draw_command(command, bag, mode, onFavorite, onRemove, onExecute, err
     if (lineNum ~= nil and lineNumW ~= nil and lineNumW > 0) then
         numW = lineNumW;
     end
-    local startX = originX + numW;
-    local contentW = math.max(1, totalW - numW);
+    local grabW = 0;
+    if ((dragKind ~= nil or isGhost) and numW > 0) then
+        grabW = kit.row_grab_width();
+    end
+    local leftW = grabW + numW;
+    local startX = originX + leftW;
+    local contentW = math.max(1, totalW - leftW);
     local favW = widgets.icon_button_size();
     local pair = kit.px(kit.EXEC_W) + kit.px(kit.GAP) + favW;
     local textH, controlH, lineH = kit.row_metrics();
@@ -185,7 +191,7 @@ function M.draw_command(command, bag, mode, onFavorite, onRemove, onExecute, err
     if (errorText ~= nil and errorText ~= '') then
         visibleH = visibleH + lineH;
     end
-    if (not M.rect_visible(totalW, visibleH)) then
+    if (not isGhost and not M.rect_visible(totalW, visibleH)) then
         imgui.SetCursorPos({ originX, startY + blockH });
         kit.submit_space(0);
         if (errorText ~= nil and errorText ~= '') then
@@ -197,8 +203,49 @@ function M.draw_command(command, bag, mode, onFavorite, onRemove, onExecute, err
         return;
     end
 
+    if (leftW > 0 and dragKind ~= nil and dragList ~= nil and lineNum ~= nil) then
+        imgui.SetCursorPos({ originX, startY });
+        local rowSX, rowSY = kit.cursor_screen_pos();
+        kit.draw_row_drag_handle(
+            'listdrag' .. rowId,
+            originX,
+            startY,
+            leftW,
+            math.max(lineH, blockH),
+            dragKind,
+            lineNum,
+            dragList,
+            dragState,
+            dragListKey,
+            dragLabel or ('!' .. tostring(command.id)),
+            grabW,
+            nameY + textH * 0.5,
+            {
+                kind = 'command',
+                lineNum = lineNum,
+                cmdText = '!' .. tostring(command.id),
+                numW = numW,
+                rowH = math.max(lineH, blockH),
+                rowW = totalW,
+                rowSX = rowSX,
+                rowSY = rowSY,
+                command = command,
+                bag = bag,
+                nameCol = nameCol,
+            }
+        );
+    elseif (isGhost and grabW > 0) then
+        imgui.SetCursorPos({ originX, nameY + textH * 0.5 });
+        local _, cy = kit.cursor_screen_pos();
+        imgui.SetCursorPos({ originX, startY });
+        local sx = kit.cursor_screen_pos();
+        if (sx ~= nil and cy ~= nil) then
+            kit.draw_grab_bars(sx, cy, sx + grabW);
+        end
+    end
+
     if (numW > 0) then
-        kit.draw_line_num(lineNum, numW, originX, nameY, textH);
+        kit.draw_line_num(lineNum, numW, originX + grabW, nameY, textH);
     end
 
     imgui.SetCursorPos({ startX, nameY });
@@ -209,19 +256,21 @@ function M.draw_command(command, bag, mode, onFavorite, onRemove, onExecute, err
     imgui.PushStyleColor(ImGuiCol_Text, theme.colors.text);
     imgui.Text(command.id);
     imgui.PopStyleColor();
-    kit.hover_tip(command.desc, kit.command_example(command));
+    if (not isGhost) then
+        kit.hover_tip(command.desc, kit.command_example(command));
+    end
 
     imgui.SetCursorPos({ startX + contentW - pair, buttonY });
-    if (widgets.execute(rowId)) then
+    if (widgets.execute(rowId) and onExecute ~= nil and not isGhost) then
         onExecute();
     end
     imgui.SetCursorPos({ startX + contentW - favW, buttonY });
-    if (mode == 'favorite') then
-        if (widgets.remove(rowId)) then
+    if (mode == 'favorite' or isGhost) then
+        if (widgets.remove(rowId) and onRemove ~= nil and not isGhost) then
             onRemove();
         end
     else
-        if (widgets.favorite(rowId, favorited == true)) then
+        if (widgets.favorite(rowId, favorited == true) and onFavorite ~= nil) then
             onFavorite();
         end
     end
@@ -241,13 +290,13 @@ function M.draw_command(command, bag, mode, onFavorite, onRemove, onExecute, err
     imgui.SetCursorPos({ originX, startY + blockH });
     kit.submit_space(0);
 
-    if (errorText ~= nil and errorText ~= '') then
+    if (not isGhost and errorText ~= nil and errorText ~= '') then
         imgui.PushStyleColor(ImGuiCol_Text, theme.colors.remove);
         imgui.Text(errorText);
         imgui.PopStyleColor();
     end
 
-    if (showSeparator) then
+    if (not isGhost and showSeparator) then
         imgui.PushStyleColor(ImGuiCol_Separator, theme.colors.borderSoft);
         imgui.Separator();
         imgui.PopStyleColor();

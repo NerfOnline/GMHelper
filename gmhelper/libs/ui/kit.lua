@@ -64,6 +64,9 @@ function kit.vec_x(value)
 end
 
 function kit.remaining_width()
+    if (kit._ghostRemainW ~= nil) then
+        return kit._ghostRemainW;
+    end
     if (imgui.GetContentRegionAvail ~= nil) then
         local avail, second = imgui.GetContentRegionAvail();
         if (type(avail) == 'number') then
@@ -495,6 +498,86 @@ function kit.end_command_list_spacing(pushed)
 end
 
 kit.tabDrag = { kind = nil, from = nil, moved = false };
+kit.rowDrag = {
+    kind = nil,
+    from = nil,
+    to = nil,
+    label = nil,
+    lineNum = nil,
+    cmdText = nil,
+    numW = nil,
+    rowH = nil,
+    list = nil,
+    state = nil,
+    listKey = nil,
+    active = false,
+    insertY = nil,
+    insertX1 = nil,
+    insertX2 = nil,
+};
+
+function kit.row_grab_width()
+    return kit.px(16);
+end
+
+function kit.item_rect_min()
+    if (imgui.GetItemRectMin == nil) then
+        return nil, nil;
+    end
+    local a, b;
+    local ok = pcall(function()
+        a, b = imgui.GetItemRectMin();
+    end);
+    if (ok and a ~= nil) then
+        return kit.vec2(a, b);
+    end
+    return nil, nil;
+end
+
+function kit.item_rect_max()
+    if (imgui.GetItemRectMax == nil) then
+        return nil, nil;
+    end
+    local a, b;
+    local ok = pcall(function()
+        a, b = imgui.GetItemRectMax();
+    end);
+    if (ok and a ~= nil) then
+        return kit.vec2(a, b);
+    end
+    return nil, nil;
+end
+
+function kit.cursor_screen_pos()
+    if (imgui.GetCursorScreenPos == nil) then
+        return nil, nil;
+    end
+    local a, b;
+    local ok = pcall(function()
+        a, b = imgui.GetCursorScreenPos();
+    end);
+    if (ok and a ~= nil) then
+        return kit.vec2(a, b);
+    end
+    return nil, nil;
+end
+
+function kit.draw_grab_bars(x1, centerY, x2)
+    local draw = imgui.GetWindowDrawList ~= nil and imgui.GetWindowDrawList() or nil;
+    if (draw == nil or draw.AddRectFilled == nil or centerY == nil) then
+        return;
+    end
+    local w = x2 - x1;
+    local barW = math.min(kit.px(10), math.max(kit.px(6), w - kit.px(4)));
+    local barH = 1;
+    local gap = kit.px(4);
+    local gx = x1 + (w - barW) * 0.5;
+    local col = theme.col32(theme.colors.muted);
+    for offset = -1, 1 do
+        local ly = centerY + offset * gap - barH * 0.5;
+        pcall(draw.AddRectFilled, draw, { gx, ly }, { gx + barW, ly + barH }, col);
+    end
+end
 
 function kit.bump_list(state, key)
     if (state == nil) then
@@ -604,7 +687,7 @@ function kit.draw_line_num(n, colW, x, y, refH)
     local drawX = x + math.max(0, colW - tw - gap);
     local drawY = y;
     if (y ~= nil and refH ~= nil and numH > 0) then
-        drawY = y + (refH - numH) * 0.5;
+        drawY = y + (refH - numH) * 0.5 - kit.px(1);
     end
     if (drawY ~= nil) then
         imgui.SetCursorPos({ drawX, drawY });
@@ -1295,6 +1378,477 @@ function kit.section_tab(label, id, selected, width)
     return clicked;
 end
 
+function kit.item_hovered_for_drop()
+    if (imgui.IsItemHovered == nil) then
+        return false;
+    end
+    local flags = ImGuiHoveredFlags_AllowWhenBlockedByActiveItem;
+    if (flags ~= nil) then
+        local ok, hovered = pcall(imgui.IsItemHovered, flags);
+        if (ok) then
+            return hovered == true;
+        end
+    end
+    local ok, hovered = pcall(imgui.IsItemHovered);
+    return ok and hovered == true;
+end
+
+function kit.clear_row_drag()
+    kit.rowDrag.kind = nil;
+    kit.rowDrag.from = nil;
+    kit.rowDrag.to = nil;
+    kit.rowDrag.toVis = nil;
+    kit.rowDrag.label = nil;
+    kit.rowDrag.lineNum = nil;
+    kit.rowDrag.cmdText = nil;
+    kit.rowDrag.numW = nil;
+    kit.rowDrag.rowH = nil;
+    kit.rowDrag.ghost = nil;
+    kit.rowDrag.hotX = nil;
+    kit.rowDrag.hotY = nil;
+    kit.rowDrag.list = nil;
+    kit.rowDrag.state = nil;
+    kit.rowDrag.listKey = nil;
+    kit.rowDrag.sourceRows = nil;
+    kit.rowDrag.liveRows = nil;
+    kit.rowDrag.hitBands = nil;
+    kit.rowDrag.heights = nil;
+    -- Keep heightMap across drags so the next pickup has measured row sizes.
+    kit.rowDrag.active = false;
+    kit.rowDrag.insertY = nil;
+    kit.rowDrag.insertX1 = nil;
+    kit.rowDrag.insertX2 = nil;
+end
+
+function kit.row_vis_for_slot(rows, slot)
+    if (rows == nil or slot == nil) then
+        return nil;
+    end
+    for index, row in ipairs(rows) do
+        if (row.slot == slot) then
+            return index;
+        end
+    end
+    return nil;
+end
+
+--[[
+* Build a visual row list with a hole at visual index `toVis` and the dragged slot removed.
+* `toVis` is a layout index (1..n), not a list slot — that lets the hole return to its origin.
+]]
+function kit.row_drag_layout(rows, fromSlot, toVis)
+    if (rows == nil or fromSlot == nil) then
+        return rows or {};
+    end
+    local fromVis = kit.row_vis_for_slot(rows, fromSlot);
+    if (fromVis == nil) then
+        return rows;
+    end
+    local holeVis = toVis;
+    if (holeVis == nil) then
+        holeVis = fromVis;
+    end
+    if (holeVis < 1) then
+        holeVis = 1;
+    elseif (holeVis > #rows) then
+        holeVis = #rows;
+    end
+    local others = {};
+    for index, row in ipairs(rows) do
+        if (index ~= fromVis) then
+            others[#others + 1] = row;
+        end
+    end
+    local out = {};
+    local oi = 1;
+    for vis = 1, #rows do
+        if (vis == holeVis) then
+            out[#out + 1] = {
+                hole = true,
+                slot = fromSlot,
+                height = kit.rowDrag.rowH or kit.px(28),
+            };
+        else
+            out[#out + 1] = others[oi];
+            oi = oi + 1;
+        end
+    end
+    return out;
+end
+
+--[[
+* Reorder `list` so the visible `sourceRows` match hole-at-toVis layout.
+* Works with filtered views: only the participating slots are rewritten.
+]]
+function kit.apply_row_drag_reorder(list, sourceRows, fromSlot, toVis)
+    if (list == nil or sourceRows == nil or fromSlot == nil or toVis == nil) then
+        return false;
+    end
+    local fromVis = kit.row_vis_for_slot(sourceRows, fromSlot);
+    if (fromVis == nil or fromVis == toVis) then
+        return false;
+    end
+    local holeVis = toVis;
+    if (holeVis < 1) then
+        holeVis = 1;
+    elseif (holeVis > #sourceRows) then
+        holeVis = #sourceRows;
+    end
+    if (fromVis == holeVis) then
+        return false;
+    end
+    local others = {};
+    for index, row in ipairs(sourceRows) do
+        if (index ~= fromVis) then
+            others[#others + 1] = row.slot;
+        end
+    end
+    local order = {};
+    local oi = 1;
+    for vis = 1, #sourceRows do
+        if (vis == holeVis) then
+            order[#order + 1] = fromSlot;
+        else
+            order[#order + 1] = others[oi];
+            oi = oi + 1;
+        end
+    end
+    local positions = {};
+    for _, row in ipairs(sourceRows) do
+        positions[#positions + 1] = row.slot;
+    end
+    table.sort(positions);
+    local snapshot = {};
+    for i = 1, #list do
+        snapshot[i] = list[i];
+    end
+    for i, pos in ipairs(positions) do
+        list[pos] = snapshot[order[i]];
+    end
+    return true;
+end
+
+function kit.note_row_drag(kind, index, list, state, listKey, label, meta)
+    if (imgui.IsItemActive == nil or imgui.IsMouseDragging == nil) then
+        return;
+    end
+    if (imgui.IsItemActive() and imgui.IsMouseDragging(0, kit.px(4))) then
+        if (kit.rowDrag.active ~= true or kit.rowDrag.kind ~= kind or kit.rowDrag.from == nil) then
+            local mx, my = kit.mouse_pos();
+            local info = meta or {};
+            local sourceRows = kit.rowDrag.liveRows;
+            local fromVis = kit.row_vis_for_slot(sourceRows, index) or info.fromVis or index;
+            kit.rowDrag.kind = kind;
+            kit.rowDrag.from = index;
+            kit.rowDrag.to = index;
+            kit.rowDrag.toVis = fromVis;
+            kit.rowDrag.sourceRows = sourceRows;
+            if (kit.rowDrag.heightMap ~= nil) then
+                local snap = {};
+                for slot, height in pairs(kit.rowDrag.heightMap) do
+                    snap[slot] = height;
+                end
+                kit.rowDrag.heights = snap;
+            end
+            kit.rowDrag.label = label;
+            kit.rowDrag.lineNum = info.lineNum or index;
+            kit.rowDrag.cmdText = info.cmdText or label;
+            kit.rowDrag.numW = info.numW;
+            kit.rowDrag.rowH = info.rowH;
+            kit.rowDrag.ghost = info;
+            kit.rowDrag.hotX = mx - (info.rowSX or mx);
+            kit.rowDrag.hotY = my - (info.rowSY or my);
+            kit.rowDrag.list = list;
+            kit.rowDrag.state = state;
+            kit.rowDrag.listKey = listKey;
+            kit.rowDrag.active = true;
+        end
+    end
+end
+
+function kit.note_row_drop_target(kind, visIndex)
+    if (kit.rowDrag.active ~= true or kit.rowDrag.kind ~= kind) then
+        return;
+    end
+    if (visIndex == nil or not kit.item_hovered_for_drop()) then
+        return;
+    end
+    kit.rowDrag.toVis = visIndex;
+    kit.rowDrag.to = visIndex;
+end
+
+function kit.note_row_height(slot, height)
+    if (slot == nil or height == nil or height <= 0) then
+        return;
+    end
+    if (kit.rowDrag.heightMap == nil) then
+        kit.rowDrag.heightMap = {};
+    end
+    kit.rowDrag.heightMap[slot] = height;
+end
+
+--[[
+* Drop index from mouse Y vs frozen source-row heights (ignores the live hole).
+* Avoids flicker when a short dragged row sits over a taller command.
+]]
+function kit.resolve_row_drag_from_heights(kind, listTopY, sepH)
+    if (kit.rowDrag.active ~= true or kit.rowDrag.kind ~= kind) then
+        return;
+    end
+    local sourceRows = kit.rowDrag.sourceRows or kit.rowDrag.liveRows;
+    local fromSlot = kit.rowDrag.from;
+    if (sourceRows == nil or fromSlot == nil or listTopY == nil) then
+        return;
+    end
+    local _, my = kit.mouse_pos();
+    if (my == nil) then
+        return;
+    end
+    local heights = kit.rowDrag.heights or kit.rowDrag.heightMap or {};
+    local fallback = kit.rowDrag.rowH or kit.px(28);
+    local gap = sepH or kit.px(kit.LIST_GAP_Y);
+    local acc = listTopY;
+    local insert = 0;
+    for _, row in ipairs(sourceRows) do
+        if (row.slot ~= fromSlot) then
+            local h = heights[row.slot] or fallback;
+            if (my < acc + h * 0.5) then
+                break;
+            end
+            acc = acc + h + gap;
+            insert = insert + 1;
+        end
+    end
+    local toVis = insert + 1;
+    if (toVis < 1) then
+        toVis = 1;
+    elseif (toVis > #sourceRows) then
+        toVis = #sourceRows;
+    end
+    kit.rowDrag.toVis = toVis;
+    kit.rowDrag.to = toVis;
+end
+
+function kit.draw_row_placeholder(id, width, height, kind, visIndex)
+    local w = width or kit.remaining_width();
+    local h = height or kit.rowDrag.rowH or kit.px(28);
+    local x = imgui.GetCursorPosX();
+    local y = imgui.GetCursorPosY();
+    imgui.SetCursorPos({ x, y });
+    if (imgui.Dummy ~= nil) then
+        imgui.Dummy({ w, h });
+    elseif (imgui.InvisibleButton ~= nil) then
+        imgui.InvisibleButton('##rowhole' .. tostring(id), { w, h });
+    end
+    imgui.SetCursorPos({ x, y + h });
+    kit.submit_space(0);
+end
+
+function kit.draw_row_drop_zone(id, x, y, w, h, kind, visIndex)
+    -- Kept for call-site compatibility; drop index comes from frozen heights.
+end
+
+function kit.draw_row_drag_handle(id, x, y, w, h, kind, index, list, state, listKey, label, grabW, iconCenterY, meta)
+    if (w == nil or w <= 0 or h == nil or h <= 0) then
+        return;
+    end
+    imgui.SetCursorPos({ x, y });
+    imgui.PushStyleColor(ImGuiCol_Button, theme.colors.clear);
+    imgui.PushStyleColor(ImGuiCol_ButtonHovered, theme.colors.clear);
+    imgui.PushStyleColor(ImGuiCol_ButtonActive, theme.colors.clear);
+    imgui.PushStyleColor(ImGuiCol_Border, theme.colors.clear);
+    local pushed = 0;
+    if (imgui.PushStyleVar ~= nil and ImGuiStyleVar_FrameBorderSize ~= nil) then
+        imgui.PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0);
+        pushed = 1;
+    end
+    imgui.Button('##' .. tostring(id), { w, h });
+    if (pushed > 0) then
+        imgui.PopStyleVar(pushed);
+    end
+    imgui.PopStyleColor(4);
+    local info = meta or {};
+    if (info.rowH == nil) then
+        info.rowH = h;
+    end
+    if (info.lineNum == nil) then
+        info.lineNum = index;
+    end
+    kit.note_row_drag(kind, index, list, state, listKey, label, info);
+    if (kit.rowDrag.active ~= true) then
+        -- Only use the grab as a drop target before a drag starts elsewhere.
+        kit.note_row_drop_target(kind, index);
+    end
+    local x1 = kit.item_rect_min();
+    if (x1 == nil) then
+        return;
+    end
+    local gw = grabW or kit.row_grab_width();
+    local centerY = nil;
+    if (iconCenterY ~= nil) then
+        imgui.SetCursorPos({ x, iconCenterY });
+        local _, sy = kit.cursor_screen_pos();
+        centerY = sy;
+    else
+        local _, y1 = kit.item_rect_min();
+        local _, y2 = kit.item_rect_max();
+        if (y1 ~= nil and y2 ~= nil) then
+            centerY = (y1 + y2) * 0.5;
+        end
+    end
+    if (centerY ~= nil) then
+        kit.draw_grab_bars(x1, centerY, x1 + gw);
+    end
+end
+
+function kit.draw_soft_rect_shadow(draw, x1, y1, x2, y2, spread, strength)
+    if (draw == nil or draw.AddRectFilled == nil or x1 == nil or y1 == nil or x2 == nil or y2 == nil) then
+        return;
+    end
+    local radius = spread or kit.px(16);
+    if (radius < 1) then
+        return;
+    end
+    local layers = math.max(8, math.floor(radius * 1.25));
+    local peak = strength or 0.28;
+    -- Draw distance rings (not stacked full rects) so the edge stays soft.
+    for i = 1, layers do
+        local outer = radius * (i / layers);
+        local inner = radius * ((i - 1) / layers);
+        local mid = (i - 0.5) / layers;
+        local alpha = peak * (1 - mid) * (1 - mid);
+        if (alpha > 0.008) then
+            local col = theme.col32({ 0, 0, 0, alpha });
+            -- top
+            pcall(draw.AddRectFilled, draw, { x1 - outer, y1 - outer }, { x2 + outer, y1 - inner }, col);
+            -- bottom
+            pcall(draw.AddRectFilled, draw, { x1 - outer, y2 + inner }, { x2 + outer, y2 + outer }, col);
+            -- left
+            pcall(draw.AddRectFilled, draw, { x1 - outer, y1 - inner }, { x1 - inner, y2 + inner }, col);
+            -- right
+            pcall(draw.AddRectFilled, draw, { x2 + inner, y1 - inner }, { x2 + outer, y2 + inner }, col);
+        end
+    end
+end
+
+function kit.draw_row_drag_overlay()
+    if (kit.rowDrag.active ~= true) then
+        return;
+    end
+    local ghost = kit.rowDrag.ghost;
+    if (ghost == nil) then
+        return;
+    end
+    local mx, my = kit.mouse_pos();
+    local hotX = kit.rowDrag.hotX or 0;
+    local hotY = kit.rowDrag.hotY or 0;
+    local width = ghost.rowW or kit.px(320);
+    local height = ghost.rowH or kit.px(28);
+    local px = mx - hotX;
+    local py = my - hotY;
+    local pad = kit.px(16);
+    local cond = ImGuiCond_Always or 1;
+    -- Oversized transparent window so a 4-sided soft shadow can sit behind the row.
+    imgui.SetNextWindowPos({ px - pad, py - pad }, cond);
+    imgui.SetNextWindowSize({ width + pad * 2, height + pad * 2 }, cond);
+    imgui.SetNextWindowBgAlpha(0.0);
+    local flags = kit.bor_flags(
+        ImGuiWindowFlags_NoTitleBar,
+        kit.NO_RESIZE,
+        kit.NO_MOVE,
+        kit.NO_SCROLL,
+        kit.NO_SCROLL_MOUSE,
+        kit.NO_SAVED,
+        ImGuiWindowFlags_NoFocusOnAppearing or 4096,
+        ImGuiWindowFlags_NoNav or 0,
+        ImGuiWindowFlags_NoInputs or ImGuiWindowFlags_NoMouseInputs or 0,
+        kit.NO_DOCK
+    );
+    local stylePush = 0;
+    if (imgui.PushStyleVar ~= nil and ImGuiStyleVar_WindowPadding ~= nil) then
+        imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { 0, 0 });
+        stylePush = stylePush + 1;
+    end
+    if (imgui.PushStyleVar ~= nil and ImGuiStyleVar_WindowBorderSize ~= nil) then
+        imgui.PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0);
+        stylePush = stylePush + 1;
+    end
+    imgui.PushStyleColor(ImGuiCol_WindowBg, theme.colors.clear);
+    local open = { true };
+    if (imgui.Begin('###gmhelper_rowghost', open, flags)) then
+        local winDraw = imgui.GetWindowDrawList ~= nil and imgui.GetWindowDrawList() or nil;
+        if (winDraw ~= nil) then
+            kit.draw_soft_rect_shadow(winDraw, px, py, px + width, py + height, pad, 0.26);
+            if (winDraw.AddRectFilled ~= nil) then
+                pcall(winDraw.AddRectFilled, winDraw, { px, py }, { px + width, py + height }, theme.col32(theme.colors.glass));
+            end
+        end
+        imgui.SetCursorPos({ pad, pad });
+        -- Lock layout width to the measured row so content can't spill past the shadow.
+        kit._ghostRemainW = width;
+        if (ghost.kind == 'script') then
+            local grabW = kit.row_grab_width();
+            local numW = ghost.numW or kit.line_num_width(ghost.lineNum or 1);
+            local x = imgui.GetCursorPosX();
+            local y = imgui.GetCursorPosY();
+            local refH = kit.text_height();
+            local rowH = ghost.rowH or math.max(refH, kit.px(22));
+            imgui.SetCursorPos({ x, y + rowH * 0.5 });
+            local _, cy = kit.cursor_screen_pos();
+            imgui.SetCursorPos({ x, y });
+            local sx = kit.cursor_screen_pos();
+            if (sx ~= nil and cy ~= nil) then
+                kit.draw_grab_bars(sx, cy, sx + grabW);
+            end
+            kit.draw_line_num(ghost.lineNum, numW, x + grabW, y, refH);
+            imgui.SetCursorPos({ x + grabW + numW, y });
+            imgui.Text(tostring(ghost.cmdText or ghost.label or ''));
+        elseif (ghost.command ~= nil) then
+            require('libs.ui.commands').draw_command(
+                ghost.command,
+                ghost.bag,
+                'ghost',
+                nil,
+                function() end,
+                function() end,
+                nil,
+                ghost.nameCol,
+                false,
+                'ghost',
+                nil,
+                ghost.lineNum,
+                ghost.numW
+            );
+        end
+        kit._ghostRemainW = nil;
+    end
+    imgui.End();
+    imgui.PopStyleColor(1);
+    if (stylePush > 0) then
+        imgui.PopStyleVar(stylePush);
+    end
+end
+
+function kit.finish_row_drag(save)
+    if (imgui.IsMouseReleased == nil or not imgui.IsMouseReleased(0)) then
+        if (kit.rowDrag.active == true and not kit.mouse_held(0)) then
+            kit.clear_row_drag();
+        end
+        return;
+    end
+    if (kit.rowDrag.active == true and kit.rowDrag.list ~= nil and kit.rowDrag.from ~= nil and kit.rowDrag.toVis ~= nil) then
+        if (kit.apply_row_drag_reorder(kit.rowDrag.list, kit.rowDrag.sourceRows, kit.rowDrag.from, kit.rowDrag.toVis)) then
+            if (kit.rowDrag.state ~= nil) then
+                kit.bump_list(kit.rowDrag.state, kit.rowDrag.listKey);
+            end
+            if (save ~= nil) then
+                save();
+            end
+        end
+    end
+    kit.clear_row_drag();
+end
+
 function kit.note_tab_drag(kind, index)
     if (imgui.IsItemActive == nil or imgui.IsMouseDragging == nil) then
         return;
@@ -1308,18 +1862,23 @@ function kit.note_tab_drag(kind, index)
     end
 end
 
-function kit.accept_tab_drop(kind, index, list)
+function kit.accept_tab_drop(kind, index, list, state, listKey)
     if (kit.tabDrag.kind ~= kind or kit.tabDrag.from == nil or kit.tabDrag.from == index) then
-        return;
+        return false;
     end
-    if (imgui.IsItemHovered == nil or imgui.IsMouseDragging == nil) then
-        return;
+    if (imgui.IsMouseDragging == nil) then
+        return false;
     end
-    if (imgui.IsItemHovered() and imgui.IsMouseDragging(0, 0)) then
+    if (kit.item_hovered_for_drop() and imgui.IsMouseDragging(0, 0)) then
         kit.move_item(list, kit.tabDrag.from, index);
         kit.tabDrag.from = index;
         kit.tabDrag.moved = true;
+        if (state ~= nil) then
+            kit.bump_list(state, listKey);
+        end
+        return true;
     end
+    return false;
 end
 
 function kit.finish_tab_drag(save)

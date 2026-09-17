@@ -276,6 +276,7 @@ function ui.draw(state, cfg, save)
                     commandsPage.draw_category_page(state, cfg, save, page, query);
                 end
                 imgui.EndChild();
+                kit.finish_row_drag(save);
             end
             kit.pop_font(bodyFont);
         end

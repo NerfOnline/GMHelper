@@ -160,17 +160,37 @@ function M.draw_favorites_page(state, cfg, save)
     local nameCol = kit.name_column(nameCommands);
     local numW = kit.line_num_width(#ids);
     local listSpace = kit.begin_command_list_spacing();
-    for index, row in ipairs(cache.rows) do
-        local command = row.command;
-        local bag = kit.bag_for_entry(row.entry, command);
-        local errKey = 'fav' .. tostring(tab.id) .. '_' .. tostring(row.slot);
-        cmdpage.draw_command(command, bag, 'favorite', nil, function()
-            M.remove_favorite_at(cfg, tab.id, row.slot, save, state);
-        end, function()
-            kit.run_command(cfg, command, bag, save, state.errors, errKey, state);
-        end, state.errors[errKey], nameCol, index < #cache.rows, tostring(tab.id) .. '_' .. tostring(row.slot), nil, row.slot, numW);
+    kit.rowDrag.liveRows = cache.rows;
+    local rows = cache.rows;
+    local _, listTopY = kit.cursor_screen_pos();
+    if (kit.rowDrag.active == true and kit.rowDrag.kind == 'favrow') then
+        -- Row heights already include the in-command Separator; only add item spacing.
+        kit.resolve_row_drag_from_heights('favrow', listTopY, kit.px(kit.LIST_GAP_Y));
+        rows = kit.row_drag_layout(cache.rows, kit.rowDrag.from, kit.rowDrag.toVis);
+    end
+    for index, row in ipairs(rows) do
+        if (row.hole == true) then
+            local holeH = row.height or kit.rowDrag.rowH or kit.px(28);
+            kit.draw_row_placeholder('fav' .. tostring(tab.id) .. '_' .. tostring(row.slot), kit.remaining_width(), holeH, 'favrow', index);
+            if (index < #rows) then
+                imgui.Separator();
+            end
+        else
+            local command = row.command;
+            local bag = kit.bag_for_entry(row.entry, command);
+            local errKey = 'fav' .. tostring(tab.id) .. '_' .. tostring(row.slot);
+            local dragLabel = tostring(row.slot) .. '  !' .. tostring(command.id);
+            local rowY = imgui.GetCursorPosY();
+            cmdpage.draw_command(command, bag, 'favorite', nil, function()
+                M.remove_favorite_at(cfg, tab.id, row.slot, save, state);
+            end, function()
+                kit.run_command(cfg, command, bag, save, state.errors, errKey, state);
+            end, state.errors[errKey], nameCol, index < #rows, tostring(tab.id) .. '_' .. tostring(row.slot), nil, row.slot, numW, 'favrow', ids, state, 'favorites', dragLabel);
+            kit.note_row_height(row.slot, imgui.GetCursorPosY() - rowY);
+        end
     end
     kit.end_command_list_spacing(listSpace);
+    kit.draw_row_drag_overlay();
 end
 
 function M.find_tab(cfg, name)

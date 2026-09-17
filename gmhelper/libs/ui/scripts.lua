@@ -114,19 +114,71 @@ function M.draw_scripts_page(state, cfg, save)
         return;
     end
     local numW = kit.line_num_width(#items);
+    local grabW = kit.row_grab_width();
+    local leftW = grabW + numW;
     local startX = imgui.GetCursorPosX();
-    for index, row in ipairs(cache.rows) do
-        local item = row.item;
-        local label = item.name or item.id or 'Script';
-        local y = imgui.GetCursorPosY();
-        local refH = kit.text_height();
-        kit.draw_line_num(row.slot, numW, startX, y, refH);
-        imgui.SetCursorPos({ startX + numW, y });
-        imgui.Text(tostring(label));
-        if (index < #cache.rows) then
-            imgui.Separator();
+    kit.rowDrag.liveRows = cache.rows;
+    local rows = cache.rows;
+    local _, listTopY = kit.cursor_screen_pos();
+    if (kit.rowDrag.active == true and kit.rowDrag.kind == 'scriptrow') then
+        kit.resolve_row_drag_from_heights('scriptrow', listTopY, kit.px(kit.LIST_GAP_Y) + 1);
+        rows = kit.row_drag_layout(cache.rows, kit.rowDrag.from, kit.rowDrag.toVis);
+    end
+    for index, row in ipairs(rows) do
+        if (row.hole == true) then
+            local holeH = row.height or kit.rowDrag.rowH or kit.px(22);
+            kit.draw_row_placeholder('script' .. tostring(tab.id) .. '_' .. tostring(row.slot), kit.remaining_width(), holeH, 'scriptrow', index);
+            if (index < #rows) then
+                imgui.Separator();
+            end
+        else
+            local item = row.item;
+            local label = item.name or item.id or 'Script';
+            local y = imgui.GetCursorPosY();
+            local refH = kit.text_height();
+            local rowH = math.max(refH, kit.px(22));
+            local dragLabel = tostring(row.slot) .. '  ' .. tostring(label);
+            local rowW = kit.remaining_width();
+            imgui.SetCursorPos({ startX, y });
+            local rowSX, rowSY = kit.cursor_screen_pos();
+            kit.draw_row_drag_handle(
+                'scriptdrag' .. tostring(tab.id) .. '_' .. tostring(row.slot),
+                startX,
+                y,
+                leftW,
+                rowH,
+                'scriptrow',
+                row.slot,
+                items,
+                state,
+                'scripts',
+                dragLabel,
+                grabW,
+                y + refH * 0.5,
+                {
+                    kind = 'script',
+                    lineNum = row.slot,
+                    cmdText = tostring(label),
+                    numW = numW,
+                    rowH = rowH,
+                    rowW = rowW,
+                    rowSX = rowSX,
+                    rowSY = rowSY,
+                    label = label,
+                }
+            );
+            kit.draw_line_num(row.slot, numW, startX + grabW, y, refH);
+            imgui.SetCursorPos({ startX + leftW, y });
+            imgui.Text(tostring(label));
+            kit.note_row_height(row.slot, rowH);
+            imgui.SetCursorPos({ startX, y + rowH });
+            kit.submit_space(0);
+            if (index < #rows) then
+                imgui.Separator();
+            end
         end
     end
+    kit.draw_row_drag_overlay();
 end
 
 function M.find_tab(cfg, name)
