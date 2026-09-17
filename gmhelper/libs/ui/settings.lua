@@ -230,6 +230,27 @@ function M.draw_settings_page(state, cfg, save)
     imgui.Text(tostring(snapped));
     imgui.Spacing();
     widgets.helper_text('Formats timestamps and how many History entries to keep.');
+
+    imgui.Spacing();
+    imgui.Spacing();
+    M.begin_settings_section('Help');
+    local help = {
+        { cmd = '/gmh   /gmhelper', desc = 'Opens or closes the GM Helper window.' },
+        { cmd = '/gmh favorites <tab> <number>', desc = 'Runs a favorite from that tab by its row number.' },
+        { cmd = '/gmh scripts <tab> <number>', desc = 'Runs a script from that tab by its row number.' },
+        { cmd = '/gmh presets <number>', desc = 'Runs a preset by its row number.' },
+        { cmd = '/gmh scripts stop', desc = 'Stops the script that is currently running.' },
+        { cmd = '/gmh presets stop', desc = 'Stops the preset that is currently running.' },
+    };
+    for index, entry in ipairs(help) do
+        imgui.PushStyleColor(ImGuiCol_Text, theme.colors.royal);
+        imgui.Text(entry.cmd);
+        imgui.PopStyleColor();
+        widgets.helper_text(entry.desc);
+        if (index < #help) then
+            imgui.Spacing();
+        end
+    end
 end
 
 return M;

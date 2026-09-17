@@ -19,6 +19,10 @@ local function usage(text)
     print(chat.header('gmhelper'):append(chat.message('Usage: ')):append(chat.success(text)));
 end
 
+local function is_stop(args)
+    return #args >= 3 and string.lower(tostring(args[3] or '')) == 'stop';
+end
+
 --[[
 * args[1] = /gmh|/gmhelper
 * Returns true if a subcommand was handled (including usage errors).
@@ -36,13 +40,17 @@ function shortcut.handle(args, cfg, state, save)
     end
 
     if (kind == 'presets') then
+        if (is_stop(args)) then
+            require('libs.ui.presets').stop(state);
+            return true;
+        end
         if (#args < 3) then
-            usage('/gmh presets <number>');
+            usage('/gmh presets <number|stop>');
             return true;
         end
         local index = tonumber(args[#args]);
         if (index == nil) then
-            usage('/gmh presets <number>');
+            usage('/gmh presets <number|stop>');
             return true;
         end
         local ok, err = require('libs.ui.presets').run_line(cfg, math.floor(index), save, state);
@@ -50,8 +58,18 @@ function shortcut.handle(args, cfg, state, save)
         return true;
     end
 
+    if (kind == 'scripts' and is_stop(args)) then
+        require('libs.ui.scripts').stop(state);
+        return true;
+    end
+
     if (#args < 4) then
-        usage('/gmh ' .. kind .. ' <tab name> <number>');
+        if (kind == 'scripts') then
+            usage('/gmh scripts <tab name> <number>');
+            usage('/gmh scripts stop');
+        else
+            usage('/gmh ' .. kind .. ' <tab name> <number>');
+        end
         return true;
     end
     local index = tonumber(args[#args]);
