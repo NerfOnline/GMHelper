@@ -92,7 +92,6 @@ function M.draw_settings_page(state, cfg, save)
     imgui.Spacing();
     imgui.Spacing();
     M.begin_settings_section('Presets');
-    local presetDim = M.begin_dimmed();
     if (state.commandDelayBuf == nil) then
         state.commandDelayBuf = T{ cfg.commandDelay or 1.5 };
     end
@@ -103,17 +102,37 @@ function M.draw_settings_page(state, cfg, save)
     widgets.label('Command Delay');
     imgui.SameLine();
     imgui.SetNextItemWidth(kit.px(220));
+    local delayChanged = false;
     if (imgui.SliderFloat ~= nil) then
-        local ok = pcall(imgui.SliderFloat, '##commanddelay', state.commandDelayBuf, 0.5, 5, '%.1f');
-        if (not ok) then
-            pcall(imgui.SliderFloat, '##commanddelay', state.commandDelayBuf, 0.5, 5);
+        local ok, changed = pcall(imgui.SliderFloat, '##commanddelay', state.commandDelayBuf, 0.5, 5, '%.1f');
+        if (ok) then
+            delayChanged = changed == true;
+        else
+            local ok2, changed2 = pcall(imgui.SliderFloat, '##commanddelay', state.commandDelayBuf, 0.5, 5);
+            if (ok2) then
+                delayChanged = changed2 == true;
+            end
         end
+    end
+    local delay = tonumber(state.commandDelayBuf[1]) or 1.5;
+    delay = math.floor(delay * 10 + 0.5) / 10;
+    if (delay < 0.5) then
+        delay = 0.5;
+    elseif (delay > 5) then
+        delay = 5;
+    end
+    if (delay ~= state.commandDelayBuf[1]) then
+        state.commandDelayBuf[1] = delay;
+        delayChanged = true;
+    end
+    if (delayChanged and cfg.commandDelay ~= delay) then
+        cfg.commandDelay = delay;
+        save();
     end
     imgui.SameLine();
     imgui.Text(('%.1fs'):format(cfg.commandDelay or 1.5));
     imgui.Spacing();
-    widgets.helper_text('Seconds between preset commands. Not wired up yet.');
-    M.end_dimmed(presetDim);
+    widgets.helper_text('Seconds between each command when a preset runs.');
 
     imgui.Spacing();
     imgui.Spacing();

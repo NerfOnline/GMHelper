@@ -73,7 +73,7 @@ function M.command_is_favorited(cfg, commandId)
     return false;
 end
 
-function M.add_favorite_to(cfg, tabId, commandId, values, save, state)
+function M.add_favorite_to(cfg, tabId, commandId, values, save, state, kind)
     local tab = M.favorite_tab(cfg, tabId);
     if (tab == nil or commandId == nil or commandId == '') then
         return;
@@ -81,10 +81,14 @@ function M.add_favorite_to(cfg, tabId, commandId, values, save, state)
     if (tab.commands == nil) then
         tab.commands = {};
     end
-    tab.commands[#tab.commands + 1] = {
+    local entry = {
         id = commandId,
         values = values or {},
     };
+    if (kind ~= nil and kind ~= '') then
+        entry.kind = kind;
+    end
+    tab.commands[#tab.commands + 1] = entry;
     kit.bump_list(state, 'favorites');
     save();
 end
@@ -135,6 +139,19 @@ function M.draw_favorites_page(state, cfg, save)
     listload.pump(cache, function(index)
         local entry = ids[index];
         local commandId = M.fav_entry_id(entry);
+        if (type(entry) == 'table' and entry.kind == 'preset') then
+            local preset = require('libs.ui.presets').find(commandId);
+            local label = preset and tostring(preset.name or preset.id or '') or '';
+            if (preset ~= nil and (query == '' or label:lower():find(query, 1, true) ~= nil)) then
+                cache.rows[#cache.rows + 1] = {
+                    kind = 'preset',
+                    preset = preset,
+                    entry = entry,
+                    slot = index,
+                };
+            end
+            return;
+        end
         local command = kit.command_by_id(commandId);
         if (command ~= nil and kit.matches_query(command, query)) then
             cache.rows[#cache.rows + 1] = {
@@ -155,7 +172,9 @@ function M.draw_favorites_page(state, cfg, save)
     end
     local nameCommands = {};
     for _, row in ipairs(cache.rows) do
-        nameCommands[#nameCommands + 1] = row.command;
+        if (row.command ~= nil) then
+            nameCommands[#nameCommands + 1] = row.command;
+        end
     end
     local nameCol = kit.name_column(nameCommands);
     local numW = kit.line_num_width(#ids);
@@ -175,6 +194,23 @@ function M.draw_favorites_page(state, cfg, save)
             if (index < #rows) then
                 imgui.Separator();
             end
+        elseif (row.kind == 'preset') then
+            local rowY = imgui.GetCursorPosY();
+            require('libs.ui.presets').draw_preset_row(
+                state,
+                cfg,
+                save,
+                row.preset,
+                row.slot,
+                numW,
+                index < #rows,
+                tostring(tab.id) .. '_preset_' .. tostring(row.slot),
+                'favorite',
+                function()
+                    M.remove_favorite_at(cfg, tab.id, row.slot, save, state);
+                end
+            );
+            kit.note_row_height(row.slot, imgui.GetCursorPosY() - rowY);
         else
             local command = row.command;
             local bag = kit.bag_for_entry(row.entry, command);
@@ -444,7 +480,7 @@ function M.draw_fav_modal(state, cfg, save)
         return;
     end
     state.favPickRequest = false;
-    widgets.helper_text('Choose a favorites tab for this command.', theme.colors.text);
+    widgets.helper_text('Choose a favorites tab.', theme.colors.text);
     imgui.Spacing();
     state.favPick.tabId = M.favorite_picker(cfg, state.favPick.tabId);
     imgui.Spacing();
@@ -457,7 +493,8 @@ function M.draw_fav_modal(state, cfg, save)
             state.favPick.commandId,
             state.favPick.values,
             save,
-            state
+            state,
+            state.favPick.kind
         );
         state.favTab = state.favPick.tabId;
         state.favPick = nil;

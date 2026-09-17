@@ -120,8 +120,9 @@ end);
 ashita.events.register('d3d_present', 'gmhelper_present', function()
     lookup.tick();
     widgets.begin_frame();
+    cfg = store.cfg();
+    require('libs.ui.presets').tick(state, cfg, save);
     if (state.visible) then
-        cfg = store.cfg();
         ui.draw(state, cfg, save);
     end
     lookup.end_frame();
