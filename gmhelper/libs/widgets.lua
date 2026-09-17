@@ -288,6 +288,37 @@ function widgets.placeholder(id, buffer, hint, width, align)
     paint_focus_border(width, 22);
 end
 
+function widgets.multiline(id, buffer, hint, width, height, maxLen)
+    if (buffer[1] == nil) then
+        buffer[1] = '';
+    end
+    maxLen = maxLen or 8192;
+    local size = { width or 0, height or widgets.px(180) };
+    local result = nil;
+    if (imgui.InputTextMultiline ~= nil) then
+        local ok, out = pcall(imgui.InputTextMultiline, '##' .. id, buffer, maxLen, size);
+        if (ok) then
+            result = out;
+        else
+            ok, out = pcall(imgui.InputTextMultiline, '##' .. id, buffer, size);
+            if (ok) then
+                result = out;
+            end
+        end
+    end
+    if (type(result) == 'string') then
+        buffer[1] = result;
+    end
+    if (trim(buffer[1]) == '' and hint ~= nil and hint ~= '' and imgui.IsItemActive ~= nil and not imgui.IsItemActive()) then
+        local x1, y1 = item_bounds(width, height);
+        local draw = imgui.GetWindowDrawList();
+        if (draw ~= nil and draw.AddText ~= nil and x1 ~= nil and y1 ~= nil) then
+            draw:AddText({ x1 + widgets.px(10), y1 + widgets.px(8) }, theme.col32(theme.colors.muted), hint);
+        end
+    end
+    paint_focus_border(width, height);
+end
+
 function widgets.icon_button_size()
     local textH = 13;
     if (imgui.CalcTextSize ~= nil) then

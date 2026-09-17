@@ -56,11 +56,14 @@ end
 
 function ui.draw_modals(state, cfg, save)
     favorites.draw_fav_modal(state, cfg, save);
+    favorites.draw_fav_move_modal(state, cfg, save);
     favorites.draw_rename_modal(state, cfg, save);
     favorites.draw_delete_modal(state, cfg, save);
     scripts.draw_script_rename_modal(state, cfg, save);
+    scripts.draw_script_item_rename_modal(state, cfg, save);
     scripts.draw_script_delete_modal(state, cfg, save);
-    scripts.draw_script_add_modal(state);
+    scripts.draw_script_move_modal(state, cfg, save);
+    scripts.draw_script_add_modal(state, cfg, save);
 end
 
 function ui.draw_tabs(state, cfg, save)

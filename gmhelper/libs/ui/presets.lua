@@ -223,6 +223,7 @@ function M.start(cfg, preset, save, state)
         total = #commands,
         nextAt = os.clock() + M.command_delay(cfg),
     };
+    state.scriptRun = nil;
     return true;
 end
 
@@ -266,6 +267,8 @@ function M.draw_preset_row(state, cfg, save, preset, slot, numW, showSeparator, 
         totalW = 1;
     end
     local textH, controlH, lineH = kit.row_metrics();
+    local nameY = startY + math.max(0, (lineH - textH) * 0.5);
+    local buttonY = startY + math.max(0, (lineH - controlH) * 0.5);
     local favW = widgets.icon_button_size();
     local execW = kit.px(kit.EXEC_W);
     local gap = kit.px(kit.GAP);
@@ -276,12 +279,12 @@ function M.draw_preset_row(state, cfg, save, preset, slot, numW, showSeparator, 
     local run = running and state.presetRun or nil;
 
     if (numW ~= nil and numW > 0 and slot ~= nil) then
-        kit.draw_line_num(slot, numW, originX, startY - kit.px(1), lineH);
+        kit.draw_line_num(slot, numW, originX, nameY, textH);
     end
 
     local label = tostring(preset.name or preset.id or 'Preset');
     local nameW = kit.text_px(label);
-    imgui.SetCursorPos({ nameX, startY + math.max(0, (lineH - textH) * 0.5) });
+    imgui.SetCursorPos({ nameX, nameY });
     imgui.PushStyleColor(ImGuiCol_Text, theme.colors.text);
     imgui.Text(label);
     imgui.PopStyleColor();
@@ -289,8 +292,10 @@ function M.draw_preset_row(state, cfg, save, preset, slot, numW, showSeparator, 
     if (tip ~= nil and tip ~= '') then
         kit.hover_tip(tip);
     end
+    if (mode == 'favorite' and slot ~= nil) then
+        require('libs.ui.favorites').note_fav_item_menu(state, state.favTab, slot);
+    end
 
-    local buttonY = startY + math.max(0, (lineH - controlH) * 0.5);
     local actionsX = nameX + contentW - pair;
     if (running and run ~= nil) then
         local inset = kit.px(30);

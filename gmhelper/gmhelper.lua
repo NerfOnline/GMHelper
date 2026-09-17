@@ -122,6 +122,7 @@ ashita.events.register('d3d_present', 'gmhelper_present', function()
     widgets.begin_frame();
     cfg = store.cfg();
     require('libs.ui.presets').tick(state, cfg, save);
+    require('libs.ui.scripts').tick(state, cfg, save);
     if (state.visible) then
         ui.draw(state, cfg, save);
     end

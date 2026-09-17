@@ -106,6 +106,118 @@ function M.remove_favorite_at(cfg, tabId, slot, save, state)
     save();
 end
 
+function M.other_fav_tab_id(cfg, fromId)
+    M.ensure_favorite_tabs(cfg);
+    for _, tab in ipairs(cfg.favoriteTabs) do
+        if (tab.id ~= fromId) then
+            return tab.id;
+        end
+    end
+    return fromId;
+end
+
+function M.move_favorite_at(cfg, fromTabId, slot, toTabId, save, state)
+    if (fromTabId == nil or toTabId == nil or slot == nil) then
+        return false;
+    end
+    if (fromTabId == toTabId) then
+        return true;
+    end
+    local fromTab = M.favorite_tab(cfg, fromTabId);
+    local toTab = M.favorite_tab(cfg, toTabId);
+    if (fromTab == nil or toTab == nil or fromTab.commands == nil or fromTab.commands[slot] == nil) then
+        return false;
+    end
+    if (toTab.commands == nil) then
+        toTab.commands = {};
+    end
+    local entry = fromTab.commands[slot];
+    table.remove(fromTab.commands, slot);
+    toTab.commands[#toTab.commands + 1] = entry;
+    if (state ~= nil) then
+        state.favTab = toTab.id;
+    end
+    kit.bump_list(state, 'favorites');
+    if (save ~= nil) then
+        save();
+    end
+    return true;
+end
+
+function M.note_fav_item_menu(state, tabId, slot)
+    if (imgui.IsItemClicked == nil) then
+        return;
+    end
+    local ok, clicked = pcall(imgui.IsItemClicked, 1);
+    if (not ok or clicked ~= true) then
+        return;
+    end
+    local mx, my = kit.mouse_pos();
+    state.favItemMenuTabId = tabId;
+    state.favItemMenuSlot = slot;
+    state.favItemMenuPos = { mx, my };
+    state.favItemMenuRequest = true;
+end
+
+function M.fav_item_menu(state, cfg)
+    if (state.favItemMenuTabId == nil or state.favItemMenuSlot == nil or imgui.BeginPopup == nil) then
+        return;
+    end
+    local tab = M.favorite_tab(cfg, state.favItemMenuTabId);
+    local slot = state.favItemMenuSlot;
+    local entry = tab and tab.commands and tab.commands[slot];
+    if (entry == nil) then
+        state.favItemMenuRequest = false;
+        state.favItemMenuTabId = nil;
+        state.favItemMenuSlot = nil;
+        return;
+    end
+    if (state.favItemMenuRequest) then
+        if (kit.mouse_held(1) or kit.mouse_held(0)) then
+            return;
+        end
+        if (imgui.OpenPopup ~= nil) then
+            imgui.OpenPopup('###gmhelper_favitemmenu');
+        end
+        state.favItemMenuRequest = false;
+    end
+    local pos = state.favItemMenuPos or { 0, 0 };
+    local cond = ImGuiCond_Always or 1;
+    if (imgui.SetNextWindowDockID ~= nil) then
+        pcall(imgui.SetNextWindowDockID, 0, cond);
+    end
+    if (not pcall(imgui.SetNextWindowPos, pos, cond, { 0, 0 })) then
+        pcall(imgui.SetNextWindowPos, pos, cond);
+    end
+    local ok, result = pcall(imgui.BeginPopup, '###gmhelper_favitemmenu');
+    local opened = ok and (result == true or (result ~= nil and result ~= false));
+    if (not opened) then
+        return;
+    end
+    local itemW = kit.px(84);
+    local canMove = #cfg.favoriteTabs > 1;
+    if (imgui.PushStyleVar ~= nil and ImGuiStyleVar_SelectableTextAlign ~= nil) then
+        imgui.PushStyleVar(ImGuiStyleVar_SelectableTextAlign, { 0.5, 0.5 });
+    end
+    if (kit.menu_hit('Move', canMove, itemW)) then
+        state.favMove = {
+            fromTabId = tab.id,
+            slot = slot,
+            toTabId = M.other_fav_tab_id(cfg, tab.id),
+        };
+        state.favMoveRequest = true;
+        state.favItemMenuTabId = nil;
+        state.favItemMenuSlot = nil;
+        if (imgui.CloseCurrentPopup ~= nil) then
+            imgui.CloseCurrentPopup();
+        end
+    end
+    if (imgui.PopStyleVar ~= nil and ImGuiStyleVar_SelectableTextAlign ~= nil) then
+        imgui.PopStyleVar();
+    end
+    imgui.EndPopup();
+end
+
 function M.selected_fav_tab(state, cfg)
     M.ensure_favorite_tabs(cfg);
     local tab = M.favorite_tab(cfg, state.favTab);
@@ -227,6 +339,7 @@ function M.draw_favorites_page(state, cfg, save)
     end
     kit.end_command_list_spacing(listSpace);
     kit.draw_row_drag_overlay();
+    M.fav_item_menu(state, cfg);
 end
 
 function M.find_tab(cfg, name)
@@ -429,7 +542,7 @@ function M.draw_fav_tabs(state, cfg, save)
     M.fav_tab_menu(state, cfg);
 end
 
-function M.favorite_picker(cfg, choiceId)
+function M.favorite_picker(cfg, choiceId, comboId)
     M.ensure_favorite_tabs(cfg);
     local shown = M.favorite_tab(cfg, choiceId).name or 'Default';
     local tabLabels = {};
@@ -437,11 +550,12 @@ function M.favorite_picker(cfg, choiceId)
         tabLabels[#tabLabels + 1] = tab.name or 'Tab';
     end
     local flags = ImGuiComboFlags_PopupAlignLeft;
-    local opened, centered, listW = widgets.begin_labels_combo('##favpicktab', shown, tabLabels, flags, 'fill');
+    local id = comboId or '##favpicktab';
+    local opened, centered, listW = widgets.begin_labels_combo(id, shown, tabLabels, flags, 'fill');
     local picked = choiceId;
     if (opened) then
         for _, tab in ipairs(cfg.favoriteTabs) do
-            if (widgets.labels_combo_option('favpick' .. tab.id, tab.name or 'Tab', tab.id == picked, listW)) then
+            if (widgets.labels_combo_option((comboId or 'favpick') .. tab.id, tab.name or 'Tab', tab.id == picked, listW)) then
                 picked = tab.id;
             end
         end
@@ -504,6 +618,42 @@ function M.draw_fav_modal(state, cfg, save)
         state.favPick = nil;
     end
     kit.end_modal('favpick');
+end
+
+function M.draw_fav_move_modal(state, cfg, save)
+    if (state.favMove == nil) then
+        return;
+    end
+    if (state.favMoveRequest and kit.mouse_held(0)) then
+        return;
+    end
+    local request = state.favMoveRequest == true;
+    if (not kit.begin_modal('favmove', 'Move Favorite', request)) then
+        return;
+    end
+    state.favMoveRequest = false;
+    widgets.helper_text('Choose a favorites tab.', theme.colors.text);
+    imgui.Spacing();
+    state.favMove.toTabId = M.favorite_picker(cfg, state.favMove.toTabId, '##favmovetab');
+    imgui.Spacing();
+    local buttonW = kit.modal_button_width();
+    kit.center_buttons({ buttonW, buttonW });
+    if (widgets.button('Confirm', 'favmoveconfirm', buttonW, 'primary')) then
+        M.move_favorite_at(
+            cfg,
+            state.favMove.fromTabId,
+            state.favMove.slot,
+            state.favMove.toTabId,
+            save,
+            state
+        );
+        state.favMove = nil;
+    end
+    imgui.SameLine();
+    if (widgets.button('Cancel', 'favmovecancel', buttonW, 'secondary')) then
+        state.favMove = nil;
+    end
+    kit.end_modal('favmove');
 end
 
 function M.draw_rename_modal(state, cfg, save)

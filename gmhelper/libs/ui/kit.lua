@@ -1780,22 +1780,35 @@ function kit.draw_row_drag_overlay()
         -- Lock layout width to the measured row so content can't spill past the shadow.
         kit._ghostRemainW = width;
         if (ghost.kind == 'script') then
+            local widgets = require('libs.widgets');
             local grabW = kit.row_grab_width();
             local numW = ghost.numW or kit.line_num_width(ghost.lineNum or 1);
             local x = imgui.GetCursorPosX();
             local y = imgui.GetCursorPosY();
-            local refH = kit.text_height();
-            local rowH = ghost.rowH or math.max(refH, kit.px(22));
-            imgui.SetCursorPos({ x, y + rowH * 0.5 });
+            local textH, controlH, lineH = kit.row_metrics();
+            local rowH = ghost.rowH or lineH;
+            local nameY = y + math.max(0, (lineH - textH) * 0.5);
+            local buttonY = y + math.max(0, (lineH - controlH) * 0.5);
+            local favW = widgets.icon_button_size();
+            local execW = kit.px(kit.EXEC_W);
+            local gap = kit.px(kit.GAP);
+            local pair = execW + gap + favW;
+            local rowW = ghost.rowW or width;
+            imgui.SetCursorPos({ x, nameY + textH * 0.5 });
             local _, cy = kit.cursor_screen_pos();
             imgui.SetCursorPos({ x, y });
             local sx = kit.cursor_screen_pos();
             if (sx ~= nil and cy ~= nil) then
                 kit.draw_grab_bars(sx, cy, sx + grabW);
             end
-            kit.draw_line_num(ghost.lineNum, numW, x + grabW, y, refH);
-            imgui.SetCursorPos({ x + grabW + numW, y });
+            kit.draw_line_num(ghost.lineNum, numW, x + grabW, nameY, textH);
+            imgui.SetCursorPos({ x + grabW + numW, nameY });
             imgui.Text(tostring(ghost.cmdText or ghost.label or ''));
+            local actionsX = x + rowW - pair;
+            imgui.SetCursorPos({ actionsX, buttonY });
+            widgets.execute('ghostscript');
+            imgui.SetCursorPos({ actionsX + execW + gap, buttonY });
+            widgets.remove('ghostscript');
         elseif (ghost.command ~= nil) then
             require('libs.ui.commands').draw_command(
                 ghost.command,
@@ -2185,17 +2198,19 @@ end
 
 -- Title + body are separate windows, same chrome as the main GM Helper frame.
 
-function kit.begin_modal(id, title, request)
+function kit.begin_modal(id, title, request, opts)
     if (request and kit.mouse_held(0)) then
         return false;
     end
     kit.claim_modal_capture();
 
+    opts = opts or {};
     local sw, sh = kit.screen_size();
     local _, padX, padY, barH = kit.title_metrics();
     local pad = kit.px(kit.PAD);
     local maxContentW = math.max(1, sw - pad * 2 - kit.px(32));
-    local contentW = math.min(kit.px(320), maxContentW);
+    local wantedW = opts.contentW or kit.px(320);
+    local contentW = math.min(wantedW, maxContentW);
     local modalW = contentW + pad * 2;
     local bodyH = kit.modalHeights[id] or kit.px(120);
     local totalH = barH + bodyH - 1;

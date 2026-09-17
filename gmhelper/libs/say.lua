@@ -63,4 +63,23 @@ function say.send(payload)
     return true;
 end
 
+--[[
+* Send a script/chat line. ! goes through unity; / commands are queued as-is.
+]]
+function say.send_line(payload)
+    payload = trim(payload);
+    if (payload == '') then
+        return false, 'Nothing to send.';
+    end
+    local first = payload:sub(1, 1);
+    if (first == '!') then
+        return say.send(payload);
+    end
+    if (first == '/') then
+        AshitaCore:GetChatManager():QueueCommand(1, payload);
+        return true;
+    end
+    return false, 'Line must start with / or !.';
+end
+
 return say;

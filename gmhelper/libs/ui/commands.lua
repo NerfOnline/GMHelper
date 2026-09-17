@@ -258,6 +258,9 @@ function M.draw_command(command, bag, mode, onFavorite, onRemove, onExecute, err
     imgui.PopStyleColor();
     if (not isGhost) then
         kit.hover_tip(command.desc, kit.command_example(command));
+        if (mode == 'favorite' and dragState ~= nil and lineNum ~= nil) then
+            require('libs.ui.favorites').note_fav_item_menu(dragState, dragState.favTab, lineNum);
+        end
     end
 
     imgui.SetCursorPos({ startX + contentW - pair, buttonY });
