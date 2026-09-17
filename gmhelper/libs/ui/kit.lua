@@ -491,6 +491,31 @@ function kit.begin_command_list_spacing()
     return 0;
 end
 
+function kit.draw_progress_timer(frac, width, height, label)
+    local x, y = kit.cursor_screen_pos();
+    local shown = tostring(label or '');
+    if (imgui.ProgressBar ~= nil) then
+        pcall(imgui.ProgressBar, frac or 0, { width, height }, '');
+    elseif (shown ~= '') then
+        imgui.PushStyleColor(ImGuiCol_Text, theme.colors.text);
+        imgui.Text(shown);
+        imgui.PopStyleColor();
+        return;
+    end
+    if (shown == '' or x == nil or y == nil) then
+        return;
+    end
+    local draw = imgui.GetWindowDrawList ~= nil and imgui.GetWindowDrawList() or nil;
+    if (draw == nil or draw.AddText == nil) then
+        return;
+    end
+    local tw = kit.text_px(shown);
+    local th = kit.text_height();
+    local tx = x + math.max(0, ((width or 0) - tw) * 0.5);
+    local ty = y + math.max(0, ((height or 0) - th) * 0.5);
+    pcall(draw.AddText, draw, { tx, ty }, theme.col32(theme.colors.text), shown);
+end
+
 function kit.end_command_list_spacing(pushed)
     if (pushed > 0 and imgui.PopStyleVar ~= nil) then
         imgui.PopStyleVar(pushed);

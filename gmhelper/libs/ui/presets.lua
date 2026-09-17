@@ -71,6 +71,67 @@ function M.command_delay(cfg)
     return delay;
 end
 
+function M.format_duration(seconds)
+    local secs = math.max(0, math.floor((tonumber(seconds) or 0) + 0.5));
+    local hours = math.floor(secs / 3600);
+    local mins = math.floor((secs % 3600) / 60);
+    local rem = secs % 60;
+    if (hours > 0) then
+        return ('%d:%02d:%02d'):format(hours, mins, rem);
+    end
+    return ('%d:%02d'):format(mins, rem);
+end
+
+function M.estimate_duration(total, cfg)
+    local count = math.max(0, (tonumber(total) or 0) - 1);
+    return count * M.command_delay(cfg);
+end
+
+function M.remaining_duration(run, cfg)
+    if (run == nil) then
+        return 0;
+    end
+    local total = math.max(0, tonumber(run.total) or 0);
+    local nextIndex = math.max(1, tonumber(run.nextIndex) or 1);
+    local delay = M.command_delay(cfg);
+    local remaining = 0;
+    local now = os.clock();
+    local nextAt = tonumber(run.nextAt) or 0;
+    if (nextAt > now) then
+        remaining = remaining + (nextAt - now);
+    end
+    -- Delays after each remaining command except the last.
+    local leftAfterCurrent = math.max(0, total - nextIndex);
+    remaining = remaining + leftAfterCurrent * delay;
+    return remaining;
+end
+
+function M.progress_info(run, cfg)
+    local done = math.max(0, tonumber(run and run.done) or 0);
+    local total = math.max(1, tonumber(run and run.total) or 1);
+    local totalSecs = tonumber(run and run.totalSecs) or 0;
+    local remaining = M.remaining_duration(run, cfg);
+    if (totalSecs < remaining) then
+        totalSecs = remaining;
+    end
+    local frac;
+    if (totalSecs > 0) then
+        frac = 1 - (remaining / totalSecs);
+    else
+        frac = done / total;
+    end
+    if (frac < 0) then
+        frac = 0;
+    elseif (frac > 1) then
+        frac = 1;
+    end
+    local overlay = '';
+    if (totalSecs > 0) then
+        overlay = M.format_duration(remaining);
+    end
+    return frac, overlay;
+end
+
 local function normalize_payload(step)
     local payload = tostring(step or '');
     if (payload == '') then
@@ -221,6 +282,7 @@ function M.start(cfg, preset, save, state)
         nextIndex = 2,
         done = 1,
         total = #commands,
+        totalSecs = M.estimate_duration(#commands, cfg),
         nextAt = os.clock() + M.command_delay(cfg),
     };
     state.scriptRun = nil;
@@ -303,23 +365,9 @@ function M.draw_preset_row(state, cfg, save, preset, slot, numW, showSeparator, 
         local progressW = math.max(1, actionsX - gap - inset - progX);
         local progressH = math.max(1, controlH * 0.5);
         local progY = startY + (lineH - progressH) * 0.5;
-        local done = math.max(0, tonumber(run.done) or 0);
-        local total = math.max(1, tonumber(run.total) or 1);
-        local frac = done / total;
-        if (frac < 0) then
-            frac = 0;
-        elseif (frac > 1) then
-            frac = 1;
-        end
+        local frac, overlay = M.progress_info(run, cfg);
         imgui.SetCursorPos({ progX, progY });
-        local overlay = ('%d/%d'):format(done, total);
-        if (imgui.ProgressBar ~= nil) then
-            pcall(imgui.ProgressBar, frac, { progressW, progressH }, overlay);
-        else
-            imgui.PushStyleColor(ImGuiCol_Text, theme.colors.muted);
-            imgui.Text(overlay);
-            imgui.PopStyleColor();
-        end
+        kit.draw_progress_timer(frac, progressW, progressH, overlay);
     end
 
     imgui.SetCursorPos({ actionsX, buttonY });

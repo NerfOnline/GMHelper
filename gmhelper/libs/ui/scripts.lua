@@ -12,6 +12,56 @@ local widgets = require('libs.widgets');
 
 local M = {};
 
+local FISHING_OBSERVATION_LINES = T{
+    '/echo ===== Starting Observation =====',
+    '/check <t>',
+    '!getskill fishing <t> <wait 60>',
+    '/echo 1 minute <wait 60>',
+    '/echo 2 minutes <wait 60>',
+    '/echo 3 minutes <wait 60>',
+    '/echo 4 minutes <wait 60>',
+    '/echo 5 minutes',
+    '/echo ===== Observation Over =====',
+};
+
+function M.fishing_observation_script()
+    return T{
+        id = 'fishing-observation',
+        name = 'Fishing Observation',
+        lines = FISHING_OBSERVATION_LINES,
+        body = table.concat(FISHING_OBSERVATION_LINES, '\n'),
+    };
+end
+
+function M.seed_builtin_scripts(cfg)
+    if (cfg == nil or cfg.scriptBuiltinsSeeded == true) then
+        return;
+    end
+    cfg.scriptBuiltinsSeeded = true;
+    local tab = nil;
+    for _, saved in ipairs(cfg.scriptTabs or {}) do
+        if (saved.id == 'default') then
+            tab = saved;
+            break;
+        end
+    end
+    if (tab == nil) then
+        tab = cfg.scriptTabs and cfg.scriptTabs[1];
+    end
+    if (tab == nil) then
+        return;
+    end
+    if (type(tab.items) ~= 'table') then
+        tab.items = T{};
+    end
+    for _, item in ipairs(tab.items) do
+        if (type(item) == 'table' and item.id == 'fishing-observation') then
+            return;
+        end
+    end
+    table.insert(tab.items, 1, M.fishing_observation_script());
+end
+
 function M.ensure_script_tabs(cfg)
     if (type(cfg.scriptTabs) ~= 'table') then
         cfg.scriptTabs = T{};
@@ -38,6 +88,7 @@ function M.ensure_script_tabs(cfg)
         tabs[1] = T{ id = 'default', name = 'Default', items = T{} };
     end
     cfg.scriptTabs = tabs;
+    M.seed_builtin_scripts(cfg);
 end
 
 function M.script_tab(cfg, id)
@@ -186,23 +237,9 @@ function M.draw_scripts_page(state, cfg, save)
                     local progressW = math.max(1, actionsX - gap - inset - progX);
                     local progressH = math.max(1, controlH * 0.5);
                     local progY = y + (lineH - progressH) * 0.5;
-                    local done = math.max(0, tonumber(run.done) or 0);
-                    local total = math.max(1, tonumber(run.total) or 1);
-                    local frac = done / total;
-                    if (frac < 0) then
-                        frac = 0;
-                    elseif (frac > 1) then
-                        frac = 1;
-                    end
+                    local frac, overlay = M.progress_info(run);
                     imgui.SetCursorPos({ progX, progY });
-                    local overlay = ('%d/%d'):format(done, total);
-                    if (imgui.ProgressBar ~= nil) then
-                        pcall(imgui.ProgressBar, frac, { progressW, progressH }, overlay);
-                    else
-                        imgui.PushStyleColor(ImGuiCol_Text, theme.colors.muted);
-                        imgui.Text(overlay);
-                        imgui.PopStyleColor();
-                    end
+                    kit.draw_progress_timer(frac, progressW, progressH, overlay);
                 end
                 imgui.SetCursorPos({ actionsX, buttonY });
                 if (running) then
@@ -330,6 +367,76 @@ function M.stop(state)
     end
 end
 
+function M.step_pause(step, isLast)
+    if (isLast or step == nil) then
+        return 0;
+    end
+    return tonumber(step.wait) or 0;
+end
+
+function M.estimate_duration(steps)
+    local total = 0;
+    for index, step in ipairs(steps or {}) do
+        total = total + M.step_pause(step, index == #(steps or {}));
+    end
+    return total;
+end
+
+function M.remaining_duration(run)
+    if (run == nil) then
+        return 0;
+    end
+    local steps = run.steps or {};
+    local remaining = 0;
+    local now = os.clock();
+    local nextAt = tonumber(run.nextAt) or 0;
+    if (nextAt > now) then
+        remaining = remaining + (nextAt - now);
+    end
+    local index = tonumber(run.index) or 1;
+    for i = index, #steps do
+        remaining = remaining + M.step_pause(steps[i], i == #steps);
+    end
+    return remaining;
+end
+
+function M.format_duration(seconds)
+    local secs = math.max(0, math.floor((tonumber(seconds) or 0) + 0.5));
+    local hours = math.floor(secs / 3600);
+    local mins = math.floor((secs % 3600) / 60);
+    local rem = secs % 60;
+    if (hours > 0) then
+        return ('%d:%02d:%02d'):format(hours, mins, rem);
+    end
+    return ('%d:%02d'):format(mins, rem);
+end
+
+function M.progress_info(run)
+    local done = math.max(0, tonumber(run and run.done) or 0);
+    local total = math.max(1, tonumber(run and run.total) or 1);
+    local totalSecs = tonumber(run and run.totalSecs) or 0;
+    local remaining = M.remaining_duration(run);
+    if (totalSecs < remaining) then
+        totalSecs = remaining;
+    end
+    local frac;
+    if (totalSecs > 0) then
+        frac = 1 - (remaining / totalSecs);
+    else
+        frac = done / total;
+    end
+    if (frac < 0) then
+        frac = 0;
+    elseif (frac > 1) then
+        frac = 1;
+    end
+    local overlay = '';
+    if (totalSecs > 0) then
+        overlay = M.format_duration(remaining);
+    end
+    return frac, overlay;
+end
+
 local function send_script_payload(cfg, payload, save, state)
     local say = require('libs.say');
     local ok, err = say.send_line(payload);
@@ -371,7 +478,9 @@ function M.start(cfg, tab, slot, item, save, state)
         index = 1,
         done = 0,
         total = total,
+        totalSecs = M.estimate_duration(steps),
         nextAt = 0,
+        startedAt = os.clock(),
     };
     M.tick(state, cfg, save);
     return true;
@@ -407,14 +516,15 @@ function M.tick(state, cfg, save)
             end
             run.done = (run.done or 0) + 1;
         end
+        local stepIndex = run.index;
         run.index = run.index + 1;
-        local wait = tonumber(step.wait) or 0;
         if (run.index > #steps) then
             state.scriptRun = nil;
             return;
         end
-        if (wait > 0) then
-            run.nextAt = now + wait;
+        local pause = M.step_pause(step, stepIndex == #steps);
+        if (pause > 0) then
+            run.nextAt = now + pause;
             return;
         end
         run.nextAt = now;

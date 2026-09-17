@@ -47,6 +47,7 @@ local histDefaults = T{
 local scriptDefaults = T{
     scriptTabs = T{},
     nextScriptId = 1,
+    scriptBuiltinsSeeded = false,
 };
 
 local function strip_legacy(target)
@@ -150,35 +151,7 @@ local function normalize_history(entries)
 end
 
 local function ensure_script_tabs(cfgTable)
-    if (type(cfgTable.scriptTabs) ~= 'table') then
-        cfgTable.scriptTabs = T{};
-    end
-    if (cfgTable.nextScriptId == nil) then
-        cfgTable.nextScriptId = 1;
-    end
-
-    -- Drop legacy nested Presets tab (now a top-level hardcoded section).
-    local tabs = T{};
-    for _, tab in ipairs(cfgTable.scriptTabs) do
-        if (type(tab) == 'table' and tab.id ~= 'presets') then
-            tab.locked = nil;
-            if (type(tab.items) ~= 'table') then
-                tab.items = T{};
-            end
-            if (tab.name == nil or tab.name == '') then
-                tab.name = 'Tab';
-            end
-            if (tab.id == nil or tab.id == '') then
-                cfgTable.nextScriptId = (cfgTable.nextScriptId or 1) + 1;
-                tab.id = 'tab' .. tostring(cfgTable.nextScriptId);
-            end
-            tabs[#tabs + 1] = tab;
-        end
-    end
-    if (#tabs == 0) then
-        tabs[1] = T{ id = 'default', name = 'Default', items = T{} };
-    end
-    cfgTable.scriptTabs = tabs;
+    require('libs.ui.scripts').ensure_script_tabs(cfgTable);
 end
 
 local function ensure_defaults()
@@ -218,6 +191,9 @@ local function build_cfg()
             if (key == 'nextScriptId') then
                 return scriptCfg.nextScriptId;
             end
+            if (key == 'scriptBuiltinsSeeded') then
+                return scriptCfg.scriptBuiltinsSeeded;
+            end
             if (key == 'presets' or key == 'favorites') then
                 return nil;
             end
@@ -242,6 +218,10 @@ local function build_cfg()
             end
             if (key == 'nextScriptId') then
                 scriptCfg.nextScriptId = value;
+                return;
+            end
+            if (key == 'scriptBuiltinsSeeded') then
+                scriptCfg.scriptBuiltinsSeeded = value;
                 return;
             end
             if (key == 'presets' or key == 'favorites') then
@@ -279,6 +259,7 @@ function store.init()
     normalize_settings(settingsCfg);
     ensure_defaults();
     build_cfg();
+    settings.save('scripts');
 
     settings.register('settings', 'gmhelper_settings', function(s)
         if (s ~= nil) then
