@@ -1943,35 +1943,66 @@ function kit.apply_rename(tab, renameBuf, save)
 end
 
 function kit.menu_hit(label, enabled, width)
-    if (width ~= nil and imgui.Selectable ~= nil) then
-        if (enabled == false and imgui.BeginDisabled ~= nil) then
-            pcall(imgui.BeginDisabled, true);
-        end
-        local picked = imgui.Selectable(label, false, 0, { width, 0 });
-        if (enabled == false and imgui.EndDisabled ~= nil) then
-            pcall(imgui.EndDisabled);
-        end
-        return picked == true or (picked ~= nil and picked ~= false and enabled ~= false);
+    local shown = tostring(label or '');
+    if (shown == '') then
+        shown = ' ';
     end
-    if (imgui.MenuItem == nil) then
-        if (enabled == false or imgui.Selectable == nil) then
-            return false;
-        end
-        local picked = imgui.Selectable(label);
-        return picked == true or (picked ~= nil and picked ~= false);
+    local disabled = enabled == false;
+    imgui.PushStyleColor(ImGuiCol_Header, theme.colors.clear);
+    imgui.PushStyleColor(ImGuiCol_HeaderHovered, theme.colors.clear);
+    imgui.PushStyleColor(ImGuiCol_HeaderActive, theme.colors.clear);
+    if (disabled and imgui.BeginDisabled ~= nil) then
+        pcall(imgui.BeginDisabled, true);
     end
-    local hit = false;
-    if (enabled == false) then
-        local ok, result = pcall(imgui.MenuItem, label, nil, false, false);
-        hit = ok and result == true;
-    else
-        local ok, result = pcall(imgui.MenuItem, label);
-        if (not ok) then
-            ok, result = pcall(imgui.MenuItem, label, nil, false, true);
+
+    local rowW = width;
+    if (imgui.GetContentRegionAvail ~= nil) then
+        local a, b = imgui.GetContentRegionAvail();
+        local avail = a;
+        if (type(a) == 'table' or type(a) == 'userdata') then
+            avail = a.x or a[1] or 0;
+        elseif (type(a) ~= 'number' and type(b) == 'number') then
+            avail = b;
         end
-        hit = ok and (result == true or (result ~= nil and result ~= false));
+        if (type(avail) == 'number' and avail > 1) then
+            rowW = math.max(tonumber(width) or 0, avail);
+        end
     end
-    return hit;
+    if (rowW == nil or rowW < 1) then
+        rowW = kit.px(84);
+    end
+
+    local picked = false;
+    if (imgui.Selectable ~= nil) then
+        local ok, result = pcall(imgui.Selectable, '##menuhit' .. shown, false, 0, { rowW, 0 });
+        if (ok) then
+            picked = result == true;
+        end
+    end
+
+    local x1, y1 = kit.item_rect_min();
+    local x2, y2 = kit.item_rect_max();
+    local hot = (not disabled) and imgui.IsItemHovered ~= nil and imgui.IsItemHovered();
+    if (hot and x1 ~= nil and y1 ~= nil and x2 ~= nil and y2 ~= nil) then
+        theme.paint_row_highlight(x1, y1, x2, y2, kit.px(3));
+    end
+    if (x1 ~= nil and y1 ~= nil and x2 ~= nil and y2 ~= nil) then
+        local draw = imgui.GetWindowDrawList ~= nil and imgui.GetWindowDrawList() or nil;
+        if (draw ~= nil and draw.AddText ~= nil) then
+            local tw = kit.text_px(shown);
+            local th = kit.text_height();
+            local tx = x1 + math.max(0, (x2 - x1 - tw) * 0.5);
+            local ty = y1 + math.max(0, (y2 - y1 - th) * 0.5);
+            local color = disabled and theme.colors.muted or theme.colors.text;
+            pcall(draw.AddText, draw, { tx, ty }, theme.col32(color), shown);
+        end
+    end
+
+    if (disabled and imgui.EndDisabled ~= nil) then
+        pcall(imgui.EndDisabled);
+    end
+    imgui.PopStyleColor(3);
+    return picked == true and not disabled;
 end
 
 function kit.mouse_clicked(button)

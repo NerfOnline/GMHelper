@@ -194,6 +194,8 @@ function M.tooltip_lines(preset)
     if (preset == nil) then
         return '';
     end
+    lookup.ensure('items');
+    lookup.focus({ 'items' });
     if (preset._tooltipCache ~= nil and lookup.ready('items')) then
         return preset._tooltipCache;
     end
@@ -209,25 +211,28 @@ function M.tooltip_lines(preset)
             totals[itemId] = totals[itemId] + amount;
         end
     end
+    if (#order == 0) then
+        return '';
+    end
+    if (not lookup.ready('items')) then
+        return lookup.loadingText('items');
+    end
     local lines = {};
-    local pending = false;
     for _, itemId in ipairs(order) do
         local raw = item_name_by_id(itemId);
         if (raw == nil) then
-            pending = true;
-            lines[#lines + 1] = ('Item %d'):format(itemId);
+            return lookup.loadingText('items');
+        end
+        local label = title_item_name(raw);
+        local qty = totals[itemId] or 1;
+        if (qty > 1) then
+            lines[#lines + 1] = ('%s x%d'):format(label, qty);
         else
-            local label = title_item_name(raw);
-            local qty = totals[itemId] or 1;
-            if (qty > 1) then
-                lines[#lines + 1] = ('%s x%d'):format(label, qty);
-            else
-                lines[#lines + 1] = label;
-            end
+            lines[#lines + 1] = label;
         end
     end
     local text = table.concat(lines, '\n');
-    if (not pending and text ~= '') then
+    if (text ~= '') then
         preset._tooltipCache = text;
     end
     return text;

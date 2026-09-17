@@ -548,22 +548,50 @@ function M.tooltip_text(item)
     if (item == nil) then
         return '';
     end
+    if (item._tooltipCache ~= nil) then
+        return item._tooltipCache;
+    end
     local lines = item.lines or item.commands;
     if (type(lines) ~= 'table') then
         local body = tostring(item.body or '');
         if (body ~= '') then
+            item._tooltipCache = body;
             return body;
         end
         return '';
     end
     local out = {};
+    local total = 0;
     for _, line in ipairs(lines) do
         local text = trim_line(line);
         if (text ~= '') then
+            total = total + 1;
             out[#out + 1] = text;
         end
     end
-    return table.concat(out, '\n');
+    if (total == 0) then
+        return '';
+    end
+    -- Long scripts build the tip across frames so hover stays smooth.
+    local built = item._tooltipBuilt or 0;
+    if (total > 24 and built < total) then
+        local step = 12;
+        local nextBuilt = math.min(total, built + step);
+        item._tooltipBuilt = nextBuilt;
+        if (nextBuilt < total) then
+            local pct = math.floor((nextBuilt * 100) / total);
+            if (pct < 1) then
+                pct = 1;
+            elseif (pct > 99) then
+                pct = 99;
+            end
+            return ('Loading...%d%%'):format(pct);
+        end
+    end
+    local text = table.concat(out, '\n');
+    item._tooltipCache = text;
+    item._tooltipBuilt = total;
+    return text;
 end
 
 function M.body_text(item)
@@ -627,6 +655,8 @@ function M.update_script_item(cfg, tabId, slot, name, body, save, state)
     item.name = shown;
     item.lines = lines;
     item.body = tostring(body or '');
+    item._tooltipCache = nil;
+    item._tooltipBuilt = nil;
     kit.bump_list(state, 'scripts');
     if (save ~= nil) then
         save();
