@@ -732,14 +732,7 @@ function kit.run_command(cfg, command, bag, save, errors, errorKey, state)
         end
         return false;
     end
-    if (kit.run_payload(cfg, payload, save, errors, errorKey, state)) then
-        kit.clear_bag(bag, command);
-        if (save ~= nil) then
-            save();
-        end
-        return true;
-    end
-    return false;
+    return kit.run_payload(cfg, payload, save, errors, errorKey, state);
 end
 
 function kit.expire_errors(state)
